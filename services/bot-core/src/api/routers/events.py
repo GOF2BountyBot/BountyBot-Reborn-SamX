@@ -70,7 +70,8 @@ _SCORABLE_KILL_WEAPONS: frozenset[str] = (_VALID_SUBTYPES - {"emp-bomb", "shock-
     "turret",
 }
 _VALID_WEAPON_VALS: frozenset[str] = _VALID_SUBTYPES | {"primary", "turret"}
-_VALID_STATES: frozenset[str] = frozenset({"draft", "scheduled", "active", "ended", "cancelled"})
+_VALID_STATES: frozenset[str] = frozenset({"draft", "scheduled", "active", "ended", "cancelled", "template"})
+_FROM_TEMPLATE = "from_template"  # pseudo type_slug on create: copy everything from body.template_id
 
 
 def _load_event_or_404(event: GameEvent | None, event_id: int, guild_id: int | None = None) -> GameEvent:
@@ -198,25 +199,69 @@ async def list_event_types():
 
 @router.post("", response_model=EventResponse, status_code=201)
 async def create_event(body: CreateEventRequest, user_id: int = Query(...)):
+    """Create a draft — or a named template (template_name), or a draft copied from a template (template_id).
+
+    With template_id the template's type, params, duration and prizes are the base and any explicit
+    body fields win over it. type_slug "from_template" is only valid together with template_id.
+    """
     if not await verify_admin_permissions(body.guild_id, user_id):
         raise HTTPException(status_code=403, detail="Admin permissions required")
-    _validate_params(body.type_slug, body.params)
+    if body.type_slug == _FROM_TEMPLATE and body.template_id is None:
+        raise HTTPException(status_code=400, detail="template_id is required with type_slug 'from_template'")
+    type_slug, params, duration = body.type_slug, dict(body.params), body.duration_days or 7
+    if body.template_id is None:
+        _validate_params(type_slug, params)
 
     now = datetime.now(UTC)
     async with get_db_session() as db:
         async with db.begin():
+            src_prizes: list = []
+            if body.template_id is not None:
+                result = await db.execute(select(GameEvent).where(GameEvent.id == body.template_id))
+                tpl = _load_event_or_404(result.scalar_one_or_none(), body.template_id, body.guild_id)
+                _assert_state_or_409(tpl, "template")
+                type_slug = tpl.type_slug
+                params = {**(tpl.params or {}), **body.params}
+                duration = body.duration_days or tpl.duration_days
+                _validate_params(type_slug, params)
+                pr = await db.execute(select(GameEventPrize).where(GameEventPrize.event_id == tpl.id))
+                src_prizes = pr.scalars().all()
+            if body.template_name is not None:
+                dup = await db.execute(
+                    select(GameEvent.id).where(
+                        GameEvent.guild_id == body.guild_id,
+                        GameEvent.state == "template",
+                        GameEvent.name == body.template_name,
+                    )
+                )
+                if dup.scalar_one_or_none() is not None:
+                    raise HTTPException(
+                        status_code=409, detail=f"A template named {body.template_name!r} already exists"
+                    )
             event = GameEvent(
                 guild_id=body.guild_id,
-                type_slug=body.type_slug,
-                params=body.params,
-                duration_days=body.duration_days,
-                state="draft",
+                type_slug=type_slug,
+                params=params,
+                duration_days=duration,
+                state="template" if body.template_name is not None else "draft",
+                name=body.template_name,
                 created_by_user_id=user_id,
                 created_at=now,
                 updated_at=now,
             )
             db.add(event)
             await db.flush()
+            for p in src_prizes:
+                db.add(
+                    GameEventPrize(
+                        event_id=event.id,
+                        rank_from=p.rank_from,
+                        rank_to=p.rank_to,
+                        kind=p.kind,
+                        item_ref=p.item_ref,
+                        qty=p.qty,
+                    )
+                )
             await AuditService.log_action(
                 db,
                 user_id=user_id,
@@ -224,11 +269,21 @@ async def create_event(body: CreateEventRequest, user_id: int = Query(...)):
                 guild_id=body.guild_id,
                 resource_type="event",
                 resource_id=str(event.id),
-                details={"type_slug": body.type_slug, "params": body.params, "duration_days": body.duration_days},
+                details={
+                    "type_slug": type_slug,
+                    "params": params,
+                    "duration_days": duration,
+                    "template_id": body.template_id,
+                    "template_name": body.template_name,
+                    "prizes_copied": len(src_prizes),
+                },
                 commit=False,
             )
         await db.refresh(event)
-    flogger.info(f"create_event: event_id={event.id} guild={body.guild_id} type={body.type_slug} by user={user_id}")
+    flogger.info(
+        f"create_event: event_id={event.id} guild={body.guild_id} type={type_slug} state={event.state}"
+        f" template_id={body.template_id} prizes_copied={len(src_prizes)} by user={user_id}"
+    )
     await _push_events_cache(body.guild_id)
     return EventResponse.model_validate(event)
 
@@ -245,7 +300,7 @@ async def delete_event(event_id: int, guild_id: int = Query(...), user_id: int =
     async with get_db_session() as db, db.begin():
         result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
         event = _load_event_or_404(result.scalar_one_or_none(), event_id, guild_id)
-        _assert_state_or_409(event, "draft", "scheduled", "cancelled")
+        _assert_state_or_409(event, "draft", "scheduled", "cancelled", "template")
         await db.delete(event)
         await AuditService.log_action(
             db,
@@ -300,7 +355,7 @@ async def add_prize(event_id: int, body: AddPrizeRequest, guild_id: int = Query(
 
             ev_result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
             event = _load_event_or_404(ev_result.scalar_one_or_none(), event_id, guild_id)
-            _assert_state_or_409(event, "draft", "active")
+            _assert_state_or_409(event, "draft", "active", "template")
 
             # Overlap / participation-duplicate check
             prize_q = await db.execute(select(GameEventPrize).where(GameEventPrize.event_id == event_id))
@@ -358,7 +413,7 @@ async def delete_prize(event_id: int, prize_id: int, guild_id: int = Query(...),
     async with get_db_session() as db, db.begin():
         ev_result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
         event = _load_event_or_404(ev_result.scalar_one_or_none(), event_id, guild_id)
-        _assert_state_or_409(event, "draft")
+        _assert_state_or_409(event, "draft", "template")
 
         pr_result = await db.execute(
             select(GameEventPrize).where(GameEventPrize.id == prize_id, GameEventPrize.event_id == event_id)
@@ -605,7 +660,7 @@ async def update_event(event_id: int, body: UpdateEventRequest, guild_id: int = 
     async with get_db_session() as db, db.begin():
         result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
         event = _load_event_or_404(result.scalar_one_or_none(), event_id, guild_id)
-        _assert_state_or_409(event, "draft", "scheduled")
+        _assert_state_or_409(event, "draft", "scheduled", "template")
         if body.params is not None:
             _validate_params(event.type_slug, body.params)
             event.params = body.params

@@ -1042,6 +1042,16 @@ class TestCommandOptions:
         assert p["min_fights"].min_value == 0
         assert p["event"].autocomplete and p["subtype"].autocomplete and p["weapon"].autocomplete
 
+    def test_create_template_options(self, events_cog):
+        import discord  # local: the fixtures re-import discord modules
+
+        p = self._params(events_cog, "admin_event_create")
+        assert p["template"].autocomplete and not p["template"].required
+        assert p["save_as_template"].type is discord.AppCommandOptionType.boolean
+        assert p["save_as_template"].default is False
+        assert p["template_name"].max_value == 64 and not p["template_name"].required  # string length bound
+        assert not p["duration_days"].required  # None → bot-core default or the template's value
+
     def test_view_options(self, events_cog):
         p = self._params(events_cog, "admin_event_view")
         assert p["event"].required and p["event"].autocomplete
@@ -1154,4 +1164,124 @@ class TestAdminEventList:
         cmd = next(c for c in events_cog.get_app_commands() if c.name == "admin_event_list")
         p = {x.name: x for x in cmd.parameters}["state"]
         assert p.default == "open"
-        assert [c.value for c in p.choices] == ["open", "draft", "scheduled", "active", "ended", "cancelled", "all"]
+        assert [c.value for c in p.choices] == [
+            "open",
+            "draft",
+            "scheduled",
+            "active",
+            "ended",
+            "cancelled",
+            "template",
+            "all",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Templates — pseudo type, selectors, create-from-template handler
+# ---------------------------------------------------------------------------
+
+
+class TestTemplates:
+    def _cog(self, mock_bot, events):
+        from cogs.eventsCog import EventsCog
+
+        cog = EventsCog(mock_bot)
+        cog.http_client = MagicMock()
+        cog.http_client.aclose = AsyncMock()
+        cog._events_cache.set(987654321, events)
+        return cog
+
+    def test_create_type_autocomplete_offers_from_template(self, mock_bot):
+        cog = self._cog(mock_bot, [])
+        cog._types_cache.set("all", [{"slug": "duels_won", "display_name": "Duels Won", "category": "duel"}])
+        interaction = _create_mock_interaction()
+        values = [c.value for c in asyncio.run(cog._create_type_autocomplete(interaction, ""))]
+        assert values[0] == "from_template" and "duels_won" in values
+        assert [c.value for c in asyncio.run(cog._create_type_autocomplete(interaction, "templ"))] == ["from_template"]
+        # the leaderboard's type picker must NOT offer it
+        assert "from_template" not in [c.value for c in asyncio.run(cog._type_autocomplete(interaction, ""))]
+
+    def test_selectors_place_templates_correctly(self, mock_bot):
+        tpl = {**_make_event(5, state="template"), "name": "Weekly Nukes"}
+        cog = self._cog(mock_bot, [_make_event(1, state="draft"), _make_event(2, state="scheduled"), tpl])
+        interaction = _create_mock_interaction()
+        ids = lambda coro: [c.value for c in asyncio.run(coro)]  # noqa: E731
+        assert ids(cog._ac_event_template(interaction, "")) == ["5"]
+        assert ids(cog._ac_event_template(interaction, "weekly")) == ["5"]  # searchable by name
+        assert ids(cog._ac_event_editable(interaction, "")) == ["1", "2", "5"]
+        assert ids(cog._ac_event_draft_scheduled(interaction, "")) == ["1", "2"]  # start never offers templates
+        assert "5" not in ids(cog._ac_event_selector_events(interaction, ""))  # players never see templates
+        assert "5" in ids(cog._ac_event_draft(interaction, "")) and "5" in ids(cog._ac_event_deletable(interaction, ""))
+        label = next(c.name for c in asyncio.run(cog._ac_event_template(interaction, "")))
+        assert label == "#5 · Weekly Nukes · Duels Won · template"
+
+    def _create(self, events_cog, responses, **kwargs):
+        events_cog._admin_gate = AsyncMock(return_value=True)
+        mocks = []
+        for payload in responses:
+            m = MagicMock()
+            m.json = MagicMock(return_value=payload)
+            mocks.append(m)
+        events_cog._api = AsyncMock(side_effect=mocks)
+        interaction = _create_mock_interaction()
+        asyncio.run(events_cog.admin_event_create.callback(events_cog, interaction, **kwargs))
+        return events_cog._api, interaction
+
+    def test_from_template_sends_template_id_and_shows_detail(self, events_cog):
+        created = {"id": 9, "state": "draft", "type_slug": "duels_won", "duration_days": 7}
+        detail = {**created, "type_display": "Duels Won", "params": {}, "prizes": []}
+        api, interaction = self._create(
+            events_cog, [created, detail], type="from_template", template="5", division="Gold"
+        )
+        body = api.await_args_list[0].kwargs["json"]
+        assert body == {
+            "guild_id": 987654321,
+            "type_slug": "from_template",
+            "params": {"division": "Gold"},
+            "template_id": 5,
+        }
+        assert "duration_days" not in body  # not passed → the template's value applies
+        assert api.await_args_list[1].args[1:3][0] == "get"
+        sent = interaction.followup.send.await_args
+        assert "from template #5" in sent.args[0] and sent.kwargs["embed"].title == "Event #9 — Duels Won"
+
+    def test_from_template_without_template_is_rejected_client_side(self, events_cog):
+        api, interaction = self._create(events_cog, [], type="from_template")
+        assert api.await_count == 0
+        assert "Pick a `template`" in interaction.followup.send.await_args.args[0]
+
+    def test_save_as_template_sends_name(self, events_cog):
+        saved = {
+            "id": 5,
+            "state": "template",
+            "name": "Weekly Nukes",
+            "type_slug": "secondary_fired",
+            "duration_days": 7,
+        }
+        api, interaction = self._create(
+            events_cog,
+            [saved],
+            type="secondary_fired",
+            subtype="nuke",
+            save_as_template=True,
+            template_name="  Weekly Nukes ",
+        )
+        body = api.await_args.kwargs["json"]
+        assert body["template_name"] == "Weekly Nukes" and body["params"] == {"subtype": "nuke"}
+        assert "Template **#5**" in interaction.followup.send.await_args.args[0]
+
+    def test_save_as_template_needs_both_flag_and_name(self, events_cog):
+        api, interaction = self._create(events_cog, [], type="duels_won", save_as_template=True)
+        assert api.await_count == 0 and "template_name" in interaction.followup.send.await_args.args[0]
+        api, interaction = self._create(events_cog, [], type="duels_won", template_name="Weekly")
+        assert api.await_count == 0 and "save_as_template" in interaction.followup.send.await_args.args[0]
+
+    def test_plain_create_sends_no_template_fields(self, events_cog):
+        api, _ = self._create(events_cog, [{"id": 1, "state": "draft", "duration_days": 7}], type="duels_won")
+        assert not {"template_id", "template_name"} & set(api.await_args.kwargs["json"])
+
+    def test_detail_embed_titles_templates(self):
+        from cogs.eventsCog import _event_detail_embed
+
+        e = {"id": 5, "name": "Weekly Nukes", "type_display": "Secondaries Fired", "state": "template", "params": {}}
+        assert _event_detail_embed(e).title == "Template #5 “Weekly Nukes” — Secondaries Fired"

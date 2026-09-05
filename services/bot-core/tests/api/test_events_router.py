@@ -26,6 +26,7 @@ def make_event(**kw):
         guild_id=99,
         type_slug="duels_won",
         state="draft",
+        name=None,
         params={},
         duration_days=7,
         scheduled_start_at=None,
@@ -1220,3 +1221,141 @@ class TestDetailPrizeOrder:
             (3, 3),
             (None, None),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Templates — state 'template', save-as-template, create-from-template
+# ---------------------------------------------------------------------------
+
+
+class TestTemplates:
+    @staticmethod
+    def _capture_added(mock_session):
+        added = []
+        mock_session.add = MagicMock(side_effect=added.append)
+        return added
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_save_as_template_creates_template_state(self, mock_db, mock_admin, mock_push, client, db_ctx):
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        added = self._capture_added(mock_session)
+        mock_session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: None))  # no dup name
+
+        async def _refresh(ev):
+            ev.id = 5
+            ev.created_at = ev.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+        mock_session.refresh = AsyncMock(side_effect=_refresh)
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={
+                "guild_id": 99,
+                "type_slug": "secondary_fired",
+                "params": {"subtype": "nuke"},
+                "template_name": "Weekly Nukes",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert (resp.json()["state"], resp.json()["name"]) == ("template", "Weekly Nukes")
+        ev = next(o for o in added if getattr(o, "state", None) == "template")
+        assert (ev.type_slug, ev.params, ev.duration_days, ev.name) == (
+            "secondary_fired",
+            {"subtype": "nuke"},
+            7,
+            "Weekly Nukes",
+        )
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_duplicate_template_name_409(self, mock_db, mock_admin, client, db_ctx):
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        mock_session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: 77))  # existing id
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "duels_won", "template_name": "Weekly Nukes"},
+        )
+        assert resp.status_code == 409 and "already exists" in resp.json()["detail"]
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    def test_from_template_requires_template_id(self, mock_admin, client):
+        resp = client.post("/api/v1/events?user_id=42", json={"guild_id": 99, "type_slug": "from_template"})
+        assert resp.status_code == 400 and "template_id" in resp.json()["detail"]
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_from_template_copies_settings_and_prizes_with_overrides(
+        self, mock_db, mock_admin, mock_push, client, db_ctx
+    ):
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        tpl = make_event(
+            id=5,
+            state="template",
+            type_slug="duels_won",
+            params={"division": "Gold", "min_fights": 3},
+            duration_days=14,
+        )
+        tpl_prizes = [
+            make_prize(id=1, event_id=5, rank_from=1, rank_to=1, qty=500),
+            make_prize(id=2, event_id=5, rank_from=None, rank_to=None, qty=50),
+        ]
+        prizes_q = MagicMock()
+        prizes_q.scalars.return_value.all.return_value = tpl_prizes
+        mock_session.execute = AsyncMock(side_effect=[MagicMock(scalar_one_or_none=lambda: tpl), prizes_q])
+        added = self._capture_added(mock_session)
+
+        async def _refresh(ev):
+            ev.id = 9
+            ev.created_at = ev.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+        mock_session.refresh = AsyncMock(side_effect=_refresh)
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "from_template", "template_id": 5, "params": {"min_fights": 1}},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert (body["state"], body["type_slug"], body["duration_days"]) == ("draft", "duels_won", 14)
+        assert body["params"] == {"division": "Gold", "min_fights": 1}  # explicit override wins, rest copied
+        copied = [o for o in added if getattr(o, "rank_from", "x") != "x" and not hasattr(o, "type_slug")]
+        assert [(p.rank_from, p.rank_to, p.qty) for p in copied] == [(1, 1, 500), (None, None, 50)]
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_from_template_rejects_non_template_source(self, mock_db, mock_admin, client, db_ctx):
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        mock_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=lambda: make_event(id=5, state="ended"))
+        )
+        resp = client.post(
+            "/api/v1/events?user_id=42", json={"guild_id": 99, "type_slug": "from_template", "template_id": 5}
+        )
+        assert resp.status_code == 409
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_template_cannot_start(self, mock_db, mock_admin, client, db_ctx):
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        mock_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=lambda: make_event(state="template"))
+        )
+        resp = client.post("/api/v1/events/1/start?guild_id=99&user_id=42", json={})
+        assert resp.status_code == 409
+
+    def test_template_is_a_valid_list_filter(self, client):
+        with patch("api.routers.events.get_db_session") as mock_db:
+            mock_db.return_value.__aenter__ = AsyncMock(
+                return_value=MagicMock(
+                    execute=AsyncMock(return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [])))
+                )
+            )
+            mock_db.return_value.__aexit__ = AsyncMock(return_value=False)
+            assert client.get("/api/v1/events/guild/99?state=template").status_code == 200
+        assert client.get("/api/v1/events/guild/99?state=bogus").status_code == 400

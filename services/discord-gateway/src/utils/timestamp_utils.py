@@ -26,6 +26,13 @@ def iso_to_discord_ts(iso_str: str | None, style: str = "R") -> str:
         return "N/A"
 
 
+def event_label(e: dict) -> str:
+    """Autocomplete label for an event: `#id · [name ·] Type · status` (templates carry a name)."""
+    td = e.get("type_display", e.get("type_slug", ""))
+    name = f"{e['name']} · " if e.get("name") else ""
+    return f"#{e.get('id')} · {name}{td} · {event_status_label(e)}"
+
+
 def event_status_label(e: dict) -> str:
     """Compute the human-readable status portion of an event autocomplete label."""
     state = e.get("state", "")

@@ -203,3 +203,68 @@ async def test_update_event_pg(pg_event):
             )
         ).first()
         assert audit is not None
+
+
+async def test_template_roundtrip_pg(pg_event):
+    """Real Postgres: save a template with prizes, create a draft from it (prizes copied), duplicate name → 409."""
+    from api.routers.events import add_prize, create_event
+    from api.schemas.events_schema import AddPrizeRequest, CreateEventRequest
+    from fastapi import HTTPException
+
+    patches = (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    )
+    with patches[0], patches[1], patches[2]:
+        tpl = await create_event(
+            CreateEventRequest(
+                guild_id=_GUILD,
+                type_slug="duels_won",
+                params={"min_fights": 3},
+                duration_days=14,
+                template_name="PG Weekly",
+            ),
+            user_id=_USER,
+        )
+        assert (tpl.state, tpl.name) == ("template", "PG Weekly")
+        await add_prize(
+            tpl.id, AddPrizeRequest(kind="credits", qty=500, rank_from=1, rank_to=1), guild_id=_GUILD, user_id=_USER
+        )
+        await add_prize(tpl.id, AddPrizeRequest(kind="credits", qty=50), guild_id=_GUILD, user_id=_USER)
+
+        draft = await create_event(
+            CreateEventRequest(
+                guild_id=_GUILD, type_slug="from_template", template_id=tpl.id, params={"division": "Gold"}
+            ),
+            user_id=_USER,
+        )
+        assert (draft.state, draft.type_slug, draft.duration_days, draft.params) == (
+            "draft",
+            "duels_won",
+            14,
+            {"min_fights": 3, "division": "Gold"},
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await create_event(
+                CreateEventRequest(guild_id=_GUILD, type_slug="duels_won", template_name="PG Weekly"), user_id=_USER
+            )
+        assert exc.value.status_code == 409
+
+    async with _pg_factory() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(GameEventPrize).where(GameEventPrize.event_id == draft.id).order_by(GameEventPrize.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [(p.rank_from, p.rank_to, p.qty) for p in rows] == [(1, 1, 500), (None, None, 50)]
+
+    async with _pg_factory() as db, db.begin():  # cleanup rows this test created
+        for eid in (draft.id, tpl.id):
+            await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = :e"), {"e": eid})
+            await db.execute(text("DELETE FROM game_events WHERE id = :e"), {"e": eid})

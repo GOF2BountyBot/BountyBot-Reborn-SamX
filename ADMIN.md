@@ -584,6 +584,7 @@ Custom stat-race challenges let admins run time-limited competitions (e.g. "most
 1. Create a draft event: `/admin_event_create type:<type> duration_days:<N>`
 2. Add prizes: `/admin_event_add_prize event:<id> place:<1st|Top N|Participation> type:<Credits|Ship|…> qty:<N>`
    - Review the whole draft any time with `/admin_event_view event:<id>` (rules, settings, timing, prizes); change it with `/admin_event_edit event:<id> [duration_days] [division] [min_fights] [subtype|module|weapon]` — only the fields you pass change, `division:All divisions` removes a division filter. Drafts and scheduled events only; once active, end it and create a new one.
+   - **Templates.** Set `save_as_template:True template_name:<name>` on `/admin_event_create` and the row is stored as a named template instead of a draft. Templates never run, but you edit them exactly like drafts (`/admin_event_edit`, `/admin_event_add_prize`, `/admin_event_remove_prize`, `/admin_event_view`, `/admin_event_delete`; list them with `/admin_event_list state:Templates`). To run one: `/admin_event_create type:"From Template" template:<name>` creates a fresh draft with the template's type, settings and every prize slot; any other option you pass at the same time (duration, division, min_fights, …) overrides the template's value. Then tweak the draft as needed and start it.
 3. Start: `/admin_event_start event:<id>` (now) or `/admin_event_start event:<id> at:<YYYY-MM-DD HH:MM> utc_offset:<±N>`
 4. The event ends automatically at the deadline; winners receive prizes and an end announcement is posted.
 5. To end early with payout: `/admin_event_end event:<id> payout:Yes`
@@ -611,7 +612,7 @@ A **notification role** (`Event Announcements`) is mentioned in start/end announ
 
 | Command | Description |
 |---------|-------------|
-| `/admin_event_create` | Create a new draft event (type, duration, optional division/subtype/module/weapon params) |
+| `/admin_event_create` | Create a new draft event (type, duration, optional division/subtype/module/weapon params); `save_as_template:True template_name:<name>` stores it as a template instead; `type:"From Template" template:<name>` creates a draft from a template |
 | `/admin_event_view` | Show a draft/scheduled event in full: rules, settings, timing, prizes |
 | `/admin_event_edit` | Change a draft/scheduled event's duration or params (only the fields you pass) |
 | `/admin_event_add_prize` | Add a prize slot (1st–10th, Top N, or Participation; Credits/Ship/Primary/Secondary/Turret/Module) |
@@ -619,7 +620,7 @@ A **notification role** (`Event Announcements`) is mentioned in start/end announ
 | `/admin_event_start` | Start an event immediately or schedule it at a future time |
 | `/admin_event_end` | End an active event with or without payout |
 | `/admin_event_delete` | Permanently delete a draft/scheduled/cancelled event |
-| `/admin_event_list` | List this guild's open events (draft, scheduled, active); `state:` filters, incl. ended/cancelled history |
+| `/admin_event_list` | List this guild's open events (draft, scheduled, active); `state:` filters, incl. ended/cancelled history and `Templates` |
 | `/admin_sync_roles` | Force notification role sync for this guild (dry_run flag available) |
 
 ### Event Environment Variables

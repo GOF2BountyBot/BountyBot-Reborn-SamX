@@ -13,9 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class CreateEventRequest(BaseModel):
     guild_id: int
-    type_slug: str
-    duration_days: int = Field(default=7, ge=1, le=60)
+    type_slug: str  # a registry slug, or "from_template" together with template_id
+    duration_days: int | None = Field(default=None, ge=1, le=60)  # None → 7, or the template's value
     params: dict = Field(default_factory=dict)
+    template_id: int | None = None  # copy type/params/duration/prizes from this template (explicit fields win)
+    template_name: str | None = Field(default=None, min_length=1, max_length=64)  # create a template, not a draft
 
 
 class UpdateEventRequest(BaseModel):
@@ -54,6 +56,7 @@ class EventResponse(BaseModel):
     guild_id: int
     type_slug: str
     state: str
+    name: str | None = None  # templates only
     params: dict
     duration_days: int
     scheduled_start_at: datetime | None = None
@@ -74,6 +77,7 @@ class EventListItem(BaseModel):
     type_slug: str
     type_display: str
     state: str
+    name: str | None = None  # templates only
     params: dict
     duration_days: int
     scheduled_start_at: datetime | None = None

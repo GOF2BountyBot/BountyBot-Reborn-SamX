@@ -757,9 +757,14 @@ async def end_event(
         pz = "; ".join(prize_parts.get(pid, []))
         suffix = f" · {pz}" if pz else ""
         standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}{suffix}")
-    # Collect @mentions of placed winners (rank ≤ highest prize rank, capped at 10)
+    # @mention the top-3 placed winners — but only those who still want event pings (opt-out is honoured;
+    # opted-out winners are still listed by name in the embed above).
     top_mention_pids = {pid for pid, _, rk in ranked if rk <= 3}
-    mention_str = " ".join(f"<@{players_by_id[pid].user_id}>" for pid in top_mention_pids if pid in players_by_id)
+    mention_str = " ".join(
+        f"<@{players_by_id[pid].user_id}>"
+        for pid in sorted(top_mention_pids)
+        if pid in players_by_id and getattr(players_by_id[pid], "event_notifications_enabled", True)
+    )
     text_content = " ".join(filter(None, [role_mention, mention_str])) or None
 
     embed_fields: list[dict] = [{"name": "Participants", "value": str(len(ranked)), "inline": True}]

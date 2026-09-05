@@ -1404,3 +1404,68 @@ class TestPrizeChangesMarkEventModified:
         resp = client.delete("/api/v1/events/1/prizes/7?guild_id=99&user_id=42")
         assert resp.status_code == 204, resp.text
         assert ev2.updated_at > stamp
+
+
+class TestAddPrizeReplace:
+    def _session(self, db_ctx, existing):
+        mock_session, mock_cm = db_ctx
+        prizes_q = MagicMock()
+        prizes_q.scalars.return_value.all.return_value = existing
+        mock_session.execute = AsyncMock(side_effect=[MagicMock(scalar_one_or_none=lambda: make_event()), prizes_q])
+        mock_session.refresh = AsyncMock(side_effect=lambda p: setattr(p, "id", 99))
+        mock_session.delete = AsyncMock()
+        return mock_session, mock_cm
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_replace_removes_the_occupant_and_inserts(self, mock_db, mock_admin, mock_push, client, db_ctx):
+        first = make_prize(id=1, rank_from=1, rank_to=1, qty=500)
+        third = make_prize(id=3, rank_from=3, rank_to=3, qty=100)
+        mock_session, mock_cm = self._session(db_ctx, [first, third])
+        mock_db.return_value = mock_cm
+        resp = client.post(
+            "/api/v1/events/1/prizes?guild_id=99&user_id=42",
+            json={"rank_from": 1, "rank_to": 1, "kind": "credits", "qty": 999, "replace": True},
+        )
+        assert resp.status_code == 201, resp.text
+        mock_session.delete.assert_awaited_once_with(first)  # only the occupant goes
+        assert resp.json()["qty"] == 999
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_replace_participation(self, mock_db, mock_admin, mock_push, client, db_ctx):
+        part = make_prize(id=5, rank_from=None, rank_to=None, qty=50)
+        mock_session, mock_cm = self._session(db_ctx, [part, make_prize(id=1)])
+        mock_db.return_value = mock_cm
+        resp = client.post(
+            "/api/v1/events/1/prizes?guild_id=99&user_id=42", json={"kind": "credits", "qty": 75, "replace": True}
+        )
+        assert resp.status_code == 201, resp.text
+        mock_session.delete.assert_awaited_once_with(part)
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_without_replace_still_400(self, mock_db, mock_admin, client, db_ctx):
+        mock_session, mock_cm = self._session(db_ctx, [make_prize(id=1, rank_from=1, rank_to=1)])
+        mock_db.return_value = mock_cm
+        resp = client.post(
+            "/api/v1/events/1/prizes?guild_id=99&user_id=42",
+            json={"rank_from": 1, "rank_to": 1, "kind": "credits", "qty": 9},
+        )
+        assert resp.status_code == 400 and "overlaps" in resp.json()["detail"]
+        mock_session.delete.assert_not_awaited()
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_replace_with_nothing_to_replace_is_a_plain_add(self, mock_db, mock_admin, mock_push, client, db_ctx):
+        mock_session, mock_cm = self._session(db_ctx, [make_prize(id=1, rank_from=1, rank_to=1)])
+        mock_db.return_value = mock_cm
+        resp = client.post(
+            "/api/v1/events/1/prizes?guild_id=99&user_id=42",
+            json={"rank_from": 2, "rank_to": 2, "kind": "credits", "qty": 9, "replace": True},
+        )
+        assert resp.status_code == 201
+        mock_session.delete.assert_not_awaited()

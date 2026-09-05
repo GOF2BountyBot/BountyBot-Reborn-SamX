@@ -33,6 +33,7 @@ class AddPrizeRequest(BaseModel):
     kind: str = Field(pattern="^(credits|item|ship)$")
     item_ref: str | None = None
     qty: int = Field(ge=1)
+    replace: bool = False  # True: remove any prize occupying the same place first (client confirms beforehand)
 
 
 class StartEventRequest(BaseModel):

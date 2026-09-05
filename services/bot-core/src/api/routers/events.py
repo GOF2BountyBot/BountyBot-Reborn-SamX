@@ -593,6 +593,7 @@ async def list_guild_events(guild_id: int, state: str | None = Query(default=Non
                 type_slug=ev.type_slug,
                 type_display=et.display_name if et else ev.type_slug,
                 state=ev.state,
+                name=ev.name,
                 params=ev.params or {},
                 duration_days=ev.duration_days,
                 scheduled_start_at=ev.scheduled_start_at,

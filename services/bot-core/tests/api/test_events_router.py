@@ -1349,6 +1349,22 @@ class TestTemplates:
         resp = client.post("/api/v1/events/1/start?guild_id=99&user_id=42", json={})
         assert resp.status_code == 409
 
+    @patch("api.routers.events.get_db_session")
+    def test_list_carries_template_name(self, mock_db, client, db_ctx):
+        """The guild list feeds the gateway pickers: templates must arrive with their name."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        rows = [make_event(id=5, state="template", name="Weekly Nukes"), make_event(id=6, state="draft")]
+        mock_session.execute = AsyncMock(
+            side_effect=[
+                MagicMock(scalars=lambda: MagicMock(all=lambda: rows)),
+                MagicMock(all=lambda: []),  # prize counts
+            ]
+        )
+        resp = client.get("/api/v1/events/guild/99?state=template,draft")
+        assert resp.status_code == 200, resp.text
+        assert [(e["id"], e["name"]) for e in resp.json()] == [(5, "Weekly Nukes"), (6, None)]
+
     def test_template_is_a_valid_list_filter(self, client):
         with patch("api.routers.events.get_db_session") as mock_db:
             mock_db.return_value.__aenter__ = AsyncMock(

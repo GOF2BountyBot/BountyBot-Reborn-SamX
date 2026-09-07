@@ -12,7 +12,7 @@ sqlalchemy-utils==0.42.1
 psycopg2-binary==2.9.12
 # Used for asyncronous database operations in most of the app runtime environment
 asyncpg==0.31.0
-alembic==1.19.1
+alembic==1.19.2
 pydantic==2.13.5
 pydantic-settings==2.15.0  # GHSA-4xgf-cpjx-pc3j: symlink traversal outside secrets_dir; transitive via fastapi[standard]
 httpx==0.28.1
@@ -31,7 +31,7 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-mock==3.15.1
-faker==40.37.0
+faker==40.38.0
 aiosqlite==0.22.1
 pytest-timeout==2.4.0
 respx==0.23.1

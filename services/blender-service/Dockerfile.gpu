@@ -110,6 +110,16 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         libsqlite3-0 \
         tar \
         python3-httplib2 \
+    # gnupg arrives with the CUDA base image (it handles the CUDA apt-repo key),
+    # not from the installs above, so the early `upgrade -y` in this same cached
+    # RUN layer is what left it floating at a stale apt snapshot. noble ships it
+    # as several binaries out of src:gnupg2 that apt keeps at a lockstep version,
+    # so upgrade the whole set — --only-upgrade silently skips (exit 0) whichever
+    # binaries this base image does not carry.
+    #   keyboxd et al.  CVE-2026-57062 (alert #1136) -> 2.4.4-2ubuntu17.6
+    && apt-get install -y --only-upgrade \
+        gpg gpg-agent gpgconf gpgsm gpgv dirmngr keyboxd \
+        gnupg gnupg-l10n gnupg-utils gpg-wks-client gpg-wks-server \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

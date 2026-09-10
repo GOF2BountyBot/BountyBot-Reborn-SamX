@@ -186,6 +186,11 @@ def _occupying_prizes(prizes: list[dict], rank_from: int | None, rank_to: int | 
     return hits
 
 
+def _rank_label(rank: int | None) -> str:
+    """Rank for display. Unqualified players carry rank None (live) or 0 (finalised)."""
+    return f"#{rank}" if rank else "—"
+
+
 def _prize_display(p: dict) -> str:
     """Display-friendly prize label for embeds (no DB id prefix)."""
     rank_from = p.get("rank_from")
@@ -1198,19 +1203,18 @@ class EventsCog(commands.Cog):
 
             embed = discord.Embed(title=f"Standings — Event #{event}", color=discord.Color.gold())
             caller_id = interaction.user.id
-            caller_row = None
             lines = []
             for r in rows[:10]:
-                medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(r["rank"], f"#{r['rank']}")
+                medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(r["rank"], _rank_label(r["rank"]))
                 qual = "" if r.get("qualified", True) else " *(unqualified)*"
                 val_str = r.get("value_display") or f"{r['value']:.1f}"
                 lines.append(f"{medal} **{r['display_name']}** — {val_str}{qual}")
-                if r.get("user_id") == caller_id and r["rank"] > 10:
-                    caller_row = r
+            # Footer is for the caller when they fell outside the displayed top 10.
+            caller_row = next((r for r in rows[10:] if r.get("user_id") == caller_id), None)
             embed.description = "\n".join(lines) or "No entries."
             caller_footer = (
                 (
-                    f"Your rank: #{caller_row['rank']} — "
+                    f"Your rank: {_rank_label(caller_row['rank'])} — "
                     + (caller_row.get("value_display") or f"{caller_row['value']:.1f}")
                     + ("" if caller_row.get("qualified", True) else " (unqualified)")
                 )

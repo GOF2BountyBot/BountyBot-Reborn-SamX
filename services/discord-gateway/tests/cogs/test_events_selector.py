@@ -1338,3 +1338,11 @@ class TestAddPrizeReplace:
         assert [p["rank_from"] for p in _occupying_prizes(prizes, 1, 5)] == [1, 5]
         assert _occupying_prizes(prizes, 4, 4) == []
         assert _occupying_prizes(prizes, None, None) == [{"rank_from": None, "rank_to": None}]
+
+    def test_rank_label_helper(self):
+        """Unqualified rows carry rank None (live standings) or 0 (finalised) — never '#None'."""
+        from cogs.eventsCog import _rank_label
+
+        assert _rank_label(4) == "#4"
+        assert _rank_label(None) == "—"
+        assert _rank_label(0) == "—"

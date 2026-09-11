@@ -661,6 +661,11 @@ async def refresh_shop_cache(bot) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Gameplay counters that mark a player row as a real player rather than a row created
+# by the get-or-create on someone's first command.
+_ACTIVITY_FIELDS = ("systems_checked", "bounty_wins", "duel_wins", "duel_losses")
+
+
 async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) -> dict:
     """Sync Discord notification roles for one guild.
 
@@ -668,8 +673,9 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
         helper and persist via config update API.
     (b) Fetch players for the guild (from player_cache if it has the three
         *_notifications_enabled flags, else GET /players/guild/{guild_id}).
-    (c) For each player: get member from guild, compute desired role set
-        from flags, add any missing roles (add-only, never removes).
+    (c) For each player with gameplay activity: get member from guild, compute
+        desired role set from flags, add any missing roles (add-only, never
+        removes). Rows with no activity at all are skipped — see _ACTIVITY_FIELDS.
 
     When dry_run=True, skips add_roles but still counts what would be added.
 
@@ -681,7 +687,7 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
     client = autocomplete_state.get_http_client()
     api_base_url = autocomplete_state.get_api_base()
     guild_id = guild.id
-    counts = {"players_scanned": 0, "roles_added": 0, "not_found": 0, "failures": 0}
+    counts = {"players_scanned": 0, "roles_added": 0, "not_found": 0, "failures": 0, "skipped_inactive": 0}
 
     try:
         # Fetch guild config
@@ -735,6 +741,11 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
 
     for player in players:
         counts["players_scanned"] += 1
+        # A player row is created by get-or-create on any command, so someone who ran
+        # one command and never played would otherwise be enrolled into three roles.
+        if not any(player.get(k) for k in _ACTIVITY_FIELDS):
+            counts["skipped_inactive"] += 1
+            continue
         discord_id = player.get("user_id") or player.get("discord_id")
         if not discord_id:
             continue
@@ -789,8 +800,8 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
 
     flogger.info(
         f"sync_notification_roles: guild={guild_id} scanned={counts['players_scanned']} "
-        f"added={counts['roles_added']} not_found={counts['not_found']} failures={counts['failures']}"
-        + (" [dry_run]" if dry_run else "")
+        f"added={counts['roles_added']} skipped_inactive={counts['skipped_inactive']} "
+        f"not_found={counts['not_found']} failures={counts['failures']}" + (" [dry_run]" if dry_run else "")
     )
 
     return counts

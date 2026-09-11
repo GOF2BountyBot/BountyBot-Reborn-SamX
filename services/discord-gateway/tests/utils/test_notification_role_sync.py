@@ -9,6 +9,7 @@ Covers:
 - bounty_notifications_enabled=False with bronze_role_id → bronze role NOT added
 - bounty_notifications_enabled=True with missing bronze role → bronze role added
 - dry_run=True → counts would-be adds, add_roles never called
+- player row with no gameplay at all → skipped, no roles added
 """
 
 from __future__ import annotations
@@ -169,6 +170,7 @@ class TestSyncNotificationRolesAllGuilds:
             {
                 "user_id": 111,
                 "tier": "Bronze",
+                "bounty_wins": 1,  # real gameplay — the sync skips rows with none
                 "bounty_notifications_enabled": False,  # skip tier role
                 "shop_notifications_enabled": False,  # skip shop role
                 "event_notifications_enabled": True,  # wants event role
@@ -225,6 +227,7 @@ class TestSyncNotificationRolesAllGuilds:
             {
                 "user_id": 222,
                 "tier": "Bronze",
+                "bounty_wins": 1,  # real gameplay — the sync skips rows with none
                 "bounty_notifications_enabled": False,
                 "shop_notifications_enabled": False,
                 "event_notifications_enabled": False,  # opted out
@@ -280,6 +283,7 @@ class TestSyncNotificationRolesAllGuilds:
             {
                 "user_id": 222,
                 "tier": "Bronze",
+                "bounty_wins": 1,  # real gameplay — the sync skips rows with none
                 "bounty_notifications_enabled": False,
                 "shop_notifications_enabled": False,
                 "event_notifications_enabled": False,
@@ -328,6 +332,7 @@ class TestSyncNotificationRolesAllGuilds:
             {
                 "user_id": 333,  # not in guild
                 "tier": "Bronze",
+                "bounty_wins": 1,  # real gameplay — the sync skips rows with none
                 "bounty_notifications_enabled": False,
                 "shop_notifications_enabled": False,
                 "event_notifications_enabled": True,
@@ -381,6 +386,7 @@ class TestSyncNotificationRolesAllGuilds:
             {
                 "user_id": 444,
                 "tier": "Bronze",
+                "bounty_wins": 1,  # real gameplay — the sync skips rows with none
                 "bounty_notifications_enabled": False,
                 "shop_notifications_enabled": False,
                 "event_notifications_enabled": False,
@@ -433,6 +439,7 @@ class TestSyncNotificationRolesAllGuilds:
             {
                 "user_id": 555,
                 "tier": "Bronze",
+                "bounty_wins": 1,  # real gameplay — the sync skips rows with none
                 "bounty_notifications_enabled": True,
                 "shop_notifications_enabled": False,
                 "event_notifications_enabled": False,
@@ -484,6 +491,7 @@ class TestSyncNotificationRolesAllGuilds:
             {
                 "user_id": 666,
                 "tier": "Bronze",
+                "bounty_wins": 1,  # real gameplay — the sync skips rows with none
                 "bounty_notifications_enabled": True,
                 "shop_notifications_enabled": False,
                 "event_notifications_enabled": False,
@@ -510,3 +518,56 @@ class TestSyncNotificationRolesAllGuilds:
         member.add_roles.assert_not_awaited()
         assert counts["roles_added"] >= 1, "dry_run should still count would-be adds"
         assert counts["players_scanned"] == 1
+
+    async def test_skips_player_row_with_no_gameplay(self, reset_state):
+        """A row created by get-or-create on one command, never played → no roles added."""
+        event_role = MagicMock()
+        event_role.id = 4001
+
+        member = _make_mock_member(discord_id=111, roles=[])
+        guild = _make_mock_guild(guild_id=999, members={111: member})
+        guild.get_role = MagicMock(return_value=event_role)
+
+        cfg = {
+            "event_announcements_role_id": 4001,
+            "shop_announcements_role_id": 4002,
+            "bounty_hunter_role_id": None,
+            "bronze_role_id": 4003,
+            "silver_role_id": None,
+            "gold_role_id": None,
+            "platinum_role_id": None,
+        }
+        players = [
+            {
+                "user_id": 111,
+                "tier": "Bronze",
+                "systems_checked": 0,
+                "bounty_wins": 0,
+                "duel_wins": 0,
+                "duel_losses": 0,
+                "bounty_notifications_enabled": True,
+                "shop_notifications_enabled": True,
+                "event_notifications_enabled": True,
+            }
+        ]
+
+        async def _mock_get(url, **kw):
+            r = MagicMock()
+            r.json.return_value = cfg if "/config/" in url else players
+            r.raise_for_status = MagicMock()
+            return r
+
+        state_mod._initialized = True
+        state_mod._http_client = MagicMock()
+        state_mod._http_client.get = _mock_get
+        state_mod._api_base = "http://bot-core:8000/api/v1"
+
+        bot = MagicMock()
+        bot.guilds = [guild]
+
+        with patch("utils.guild_setup._find_or_create_event_announcements_role", AsyncMock(return_value=None)):
+            counts = await warm_mod.sync_guild_notification_roles(bot, guild)
+
+        member.add_roles.assert_not_awaited()
+        assert counts["roles_added"] == 0
+        assert counts["skipped_inactive"] == 1

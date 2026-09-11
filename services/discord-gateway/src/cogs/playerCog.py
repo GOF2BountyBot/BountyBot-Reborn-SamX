@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import discord
@@ -19,6 +20,9 @@ flogger = bblogger.get_logger("discord-gateway-PlayerCog")
 # Define any environment variables or constants here
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"playerCog loading with API_BASE_URL: {api_base}")
+
+# Guild-config keys holding the four tier roles, in tier order.
+_TIER_ROLE_KEYS = ("bronze_role_id", "silver_role_id", "gold_role_id", "platinum_role_id")
 
 # Message shown when the guild hasn't been set up via /admin_setup
 _GUILD_NOT_CONFIGURED_MSG = (
@@ -1345,6 +1349,83 @@ class PlayerCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/unregister error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while removing the role.", ephemeral=True)
+
+    async def _find_player(self, guild_id: int, user_id: int) -> dict | None:
+        """Look up a player by Discord user id **without** creating one.
+
+        ``POST /players/`` is get-or-create, so it cannot be used to answer "is this
+        member a player?" — it would enrol them. Read the guild roster instead and
+        return None when the member has no row.
+        """
+        try:
+            resp = await self.http_client.get(f"{api_base}/players/guild/{guild_id}", params={"limit": 1000}, timeout=5)
+            resp.raise_for_status()
+            return next((p for p in resp.json() if p.get("user_id") == user_id), None)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_find_player: lookup failed for user {user_id} in guild {guild_id}: {e}")
+            return None
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
+        """Persist a hand-removed notification role as an opt-out.
+
+        The recurring role sync is add-only and reads the STORED flag, so a role
+        removed in Discord's UI — the only opt-out that existed before
+        ``/notifications`` — is handed straight back on the next run, with a
+        notification. Mirror the removal into the flag so the intent survives.
+
+        Tier roles need care: a promotion removes the old tier role and adds the new
+        one, and ``bountyCog`` does it in that order, so the intermediate state has no
+        tier role at all. Only a member still holding no tier role after the dust
+        settles has actually opted out.
+        """
+        if after.bot:
+            return
+        removed = {r.id for r in before.roles} - {r.id for r in after.roles}
+        if not removed:
+            return
+
+        guild_id = after.guild.id
+        try:
+            config_resp = await self.http_client.get(f"{api_base}/config/guild/{guild_id}", timeout=5)
+            config_resp.raise_for_status()
+            config = config_resp.json()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.debug(f"on_member_update: config fetch failed for guild {guild_id}: {e}")
+            return
+
+        tier_role_ids = {config.get(k) for k in _TIER_ROLE_KEYS} - {None}
+        opted_out: list[str] = []
+
+        if removed & tier_role_ids:
+            # ponytail: 2s settle before believing a tier-role removal, because a
+            # promotion lands as remove-then-add in two separate updates. Re-read the
+            # member rather than trusting the `after` snapshot. Swap for an explicit
+            # in-flight promotion marker if 2s ever proves too short.
+            await asyncio.sleep(2)
+            member = after.guild.get_member(after.id)
+            if member is not None and not {r.id for r in member.roles} & tier_role_ids:
+                opted_out.append("bounty")
+
+        if config.get("shop_announcements_role_id") in removed:
+            opted_out.append("shop")
+        if config.get("event_announcements_role_id") in removed:
+            opted_out.append("event")
+
+        if not opted_out:
+            return
+
+        player = await self._find_player(guild_id, after.id)
+        if player is None:
+            return  # not a player — nothing to persist, and never create a row here
+
+        for notification_type in opted_out:
+            if player.get(f"{notification_type}_notifications_enabled", True):
+                await self._persist_notification_preference(player["id"], notification_type, False)
+                flogger.info(
+                    f"on_member_update: {notification_type} notifications disabled for player "
+                    f"{player['id']} (user {after.id}) — role removed in Discord"
+                )
 
     async def _persist_notification_preference(self, player_id: int, notification_type: str, enabled: bool) -> None:
         """Persist a player's notification preference to bot-core (D-019).

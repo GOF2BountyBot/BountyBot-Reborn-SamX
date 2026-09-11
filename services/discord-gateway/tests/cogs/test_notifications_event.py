@@ -5,7 +5,7 @@ event-role block, and /unregister event_announcements_role_id inclusion.
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -312,3 +312,103 @@ class TestUnregisterEventRole:
         interaction.user.remove_roles.assert_awaited_once()
         removed = set(interaction.user.remove_roles.call_args[0])
         assert event_role in removed, f"event_role not in removed: {removed}"
+
+
+# ---------------------------------------------------------------------------
+# on_member_update — a role removed by hand becomes a stored opt-out
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_member(roles: list, member_id: int = 111, guild_id: int = 999) -> MagicMock:
+    member = MagicMock(spec=discord.Member)
+    member.id = member_id
+    member.bot = False
+    member.roles = roles
+    member.guild = MagicMock()
+    member.guild.id = guild_id
+    return member
+
+
+def _wire_cog_http(cog, config: dict, roster: list) -> MagicMock:
+    """Point the cog's client at a config + guild-roster pair; return the put mock."""
+
+    async def _get(url, **kw):
+        return _make_http_resp(200, config if "/config/" in url else roster)
+
+    cog.http_client.get = _get
+    cog.http_client.put = AsyncMock(return_value=_make_http_resp(200, {}))
+    cog.http_client.post = AsyncMock(return_value=_make_http_resp(200, {}))
+    return cog.http_client.put
+
+
+class TestOnMemberUpdateOptOut:
+    @pytest.mark.asyncio
+    async def test_event_role_removed_persists_optout(self, cog):
+        """Removing the event role in Discord stores event_notifications_enabled=False."""
+        event_role = _make_mock_role(4001, "Event Announcements")
+        before = _make_mock_member(roles=[event_role])
+        after = _make_mock_member(roles=[])
+        put = _wire_cog_http(cog, _make_config_data(), [dict(_make_player_data(), user_id=111)])
+
+        await cog.on_member_update(before, after)
+
+        put.assert_awaited_once()
+        assert put.await_args.args[0].endswith("/players/1/notifications")
+        assert put.await_args.kwargs["json"] == {"notification_type": "event", "enabled": False}
+
+    @pytest.mark.asyncio
+    async def test_tier_swap_during_promotion_does_not_opt_out(self, cog):
+        """bountyCog removes the old tier role before adding the new one — not an opt-out."""
+        bronze = _make_mock_role(2001, "Bronze")
+        silver = _make_mock_role(2002, "Silver")
+        before = _make_mock_member(roles=[bronze])
+        after = _make_mock_member(roles=[])
+        # By the time the 2s settle elapses, the promotion has added Silver.
+        after.guild.get_member = MagicMock(return_value=_make_mock_member(roles=[silver]))
+        config = dict(_make_config_data(), silver_role_id=2002)
+        put = _wire_cog_http(cog, config, [dict(_make_player_data(), user_id=111)])
+
+        with patch("cogs.playerCog.asyncio.sleep", AsyncMock()):
+            await cog.on_member_update(before, after)
+
+        put.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_last_tier_role_removed_persists_bounty_optout(self, cog):
+        """No tier role left after the settle → a real bounty opt-out."""
+        bronze = _make_mock_role(2001, "Bronze")
+        before = _make_mock_member(roles=[bronze])
+        after = _make_mock_member(roles=[])
+        after.guild.get_member = MagicMock(return_value=_make_mock_member(roles=[]))
+        put = _wire_cog_http(cog, _make_config_data(), [dict(_make_player_data(), user_id=111)])
+
+        with patch("cogs.playerCog.asyncio.sleep", AsyncMock()):
+            await cog.on_member_update(before, after)
+
+        put.assert_awaited_once()
+        assert put.await_args.kwargs["json"] == {"notification_type": "bounty", "enabled": False}
+
+    @pytest.mark.asyncio
+    async def test_non_player_is_never_created(self, cog):
+        """A member with no player row persists nothing — and is not enrolled by the lookup."""
+        event_role = _make_mock_role(4001, "Event Announcements")
+        before = _make_mock_member(roles=[event_role])
+        after = _make_mock_member(roles=[])
+        put = _wire_cog_http(cog, _make_config_data(), [])  # empty roster
+
+        await cog.on_member_update(before, after)
+
+        put.assert_not_awaited()
+        cog.http_client.post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unrelated_role_change_is_ignored(self, cog):
+        """A non-notification role removal never reaches the config fetch."""
+        other = _make_mock_role(9999, "Colour")
+        before = _make_mock_member(roles=[other])
+        after = _make_mock_member(roles=[])
+        put = _wire_cog_http(cog, _make_config_data(), [dict(_make_player_data(), user_id=111)])
+
+        await cog.on_member_update(before, after)
+
+        put.assert_not_awaited()

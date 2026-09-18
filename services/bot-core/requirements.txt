@@ -3,16 +3,16 @@ fastapi-health==0.4.0
 fastapi-sqlalchemy==0.2.1
 #fastapi-healthcheck
 #fastapi-healthcheck-sqlalchemy
-uvicorn[standard]==0.52.4
+uvicorn[standard]==0.53.0
 hypercorn[uvloop]==0.18.0
 aiohttp[speedups]==3.14.3
-SQLAlchemy[asyncio]==2.0.52
+SQLAlchemy[asyncio]==2.0.53
 sqlalchemy-utils==0.42.1
 # Used for syncronous database operations in some parts of the codebase like migration of data
-psycopg2-binary==2.9.12
+psycopg2-binary==2.9.13
 # Used for asyncronous database operations in most of the app runtime environment
 asyncpg==0.31.0
-alembic==1.19.2
+alembic==1.20.0
 pydantic==2.13.5
 pydantic-settings==2.15.0  # GHSA-4xgf-cpjx-pc3j: symlink traversal outside secrets_dir; transitive via fastapi[standard]
 httpx==0.28.1
@@ -31,7 +31,7 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-mock==3.15.1
-faker==40.38.0
+faker==40.39.0
 aiosqlite==0.22.1
 pytest-timeout==2.4.0
 respx==0.23.1

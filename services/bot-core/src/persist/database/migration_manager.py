@@ -58,16 +58,17 @@ def _build_sync_url_from_env() -> str:
     db = os.getenv("POSTGRES_DB", "bountydb")
     user = os.getenv("POSTGRES_USER", "bounty")
     pw = os.getenv("POSTGRES_PASSWORD", "bounty")
-    return f"postgresql://{user}:{pw}@{host}:{port}/{db}"
+    # Explicit driver: SQLAlchemy 2.1 made bare postgresql:// mean psycopg (v3), which is not installed.
+    return f"postgresql+psycopg2://{user}:{pw}@{host}:{port}/{db}"
 
 
 def _async_to_sync_url(async_url: str) -> str:
     """Convert an asyncpg URL to a synchronous psycopg2 URL.
 
-    Replaces the ``postgresql+asyncpg://`` scheme with ``postgresql://`` so
+    Replaces the ``postgresql+asyncpg://`` scheme with ``postgresql+psycopg2://`` so
     that Alembic (which requires a synchronous DBAPI) can use it.
     """
-    return async_url.replace("postgresql+asyncpg://", "postgresql://")
+    return async_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
 
 
 def _mask_url_password(url: str) -> str:
@@ -108,7 +109,7 @@ class MigrationManager:
     ----------
     sync_url:
         A synchronous (psycopg2-compatible) PostgreSQL connection URL.
-        Must start with ``postgresql://`` — asyncpg URLs are **not** accepted
+        Must start with ``postgresql+psycopg2://`` — asyncpg URLs are **not** accepted
         here; use :meth:`from_async_url` to convert them automatically.
     """
 
@@ -117,7 +118,7 @@ class MigrationManager:
         if sync_url.startswith("postgresql+asyncpg://"):
             flogger.error("__init__: Attempted to use asyncpg URL (postgresql+asyncpg://) instead of sync URL")
             raise ValueError(
-                "MigrationManager requires a synchronous URL (postgresql://…). "
+                "MigrationManager requires a synchronous URL (postgresql+psycopg2://…). "
                 "Use MigrationManager.from_async_url() to convert an asyncpg URL."
             )
         self._sync_url = sync_url

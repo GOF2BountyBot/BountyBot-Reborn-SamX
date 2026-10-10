@@ -25,7 +25,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-SYNC_URL = "postgresql://bounty:bounty@localhost:5432/bountydb"
+SYNC_URL = "postgresql+psycopg2://bounty:bounty@localhost:5432/bountydb"
 ASYNC_URL = "postgresql+asyncpg://bounty:bounty@localhost:5432/bountydb"
 
 
@@ -47,7 +47,7 @@ class TestAsyncToSyncUrl:
 
     def test_preserves_credentials_and_path(self) -> None:
         url = "postgresql+asyncpg://user:secret@db-host:9999/mydb"
-        expected = "postgresql://user:secret@db-host:9999/mydb"
+        expected = "postgresql+psycopg2://user:secret@db-host:9999/mydb"
         assert _async_to_sync_url(url) == expected
 
 
@@ -68,7 +68,7 @@ class TestBuildSyncUrlFromEnv:
 
         url = _build_sync_url_from_env()
 
-        assert url == "postgresql://myuser:mypassword@myhost:5433/mydb"
+        assert url == "postgresql+psycopg2://myuser:mypassword@myhost:5433/mydb"
 
     def test_falls_back_to_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When env vars are absent the defaults must match the project convention."""
@@ -77,12 +77,12 @@ class TestBuildSyncUrlFromEnv:
 
         url = _build_sync_url_from_env()
 
-        assert url == "postgresql://bounty:bounty@bounty_db:5432/bountydb"
+        assert url == "postgresql+psycopg2://bounty:bounty@bounty_db:5432/bountydb"
 
     def test_url_starts_with_postgresql_scheme(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("POSTGRES_HOST", raising=False)
         url = _build_sync_url_from_env()
-        assert url.startswith("postgresql://")
+        assert url.startswith("postgresql+psycopg2://")
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ class TestFromEnv:
 
         mgr = MigrationManager.from_env()
 
-        assert mgr._sync_url == "postgresql://envuser:envpw@envhost:5432/envdb"
+        assert mgr._sync_url == "postgresql+psycopg2://envuser:envpw@envhost:5432/envdb"
 
     def test_returns_migration_manager_instance(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("POSTGRES_HOST", raising=False)

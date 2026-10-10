@@ -46,7 +46,7 @@ from persist.models.game_event import EventResult, GameEvent, GameEventMetric, G
 from persist.models.player import Player
 from persist.models.user import User
 from persist.repositories.config_repository import ConfigRepository
-from services.event_service import end_event, medals
+from services.event_service import end_event, final_standings, medals
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -210,3 +210,111 @@ async def test_payout_credits_and_medals():
 
     finally:
         await _cleanup(ev_id)
+
+
+async def test_zero_scorer_unranked_pg():
+    """Issue #125: mixed field — 0-scorer's event_result.rank IS NULL, gets only participation,
+    final_standings lists it last (nulls_last ORDER BY) with rank mapped to 0."""
+    now = datetime.now(UTC)
+    ev_id: int | None = None
+    player_a_id: int | None = None
+    player_b_id: int | None = None
+
+    # Use distinct discord IDs to avoid collisions with test_payout_credits_and_medals
+    _DISC_C = 999_777_222_201
+    _DISC_D = 999_777_222_202
+
+    async with _pg_factory() as db, db.begin():
+        await db.execute(text("DELETE FROM players WHERE user_id = ANY(:ids)"), {"ids": [_DISC_C, _DISC_D]})
+        await db.execute(text("DELETE FROM users WHERE id = ANY(:ids)"), {"ids": [_DISC_C, _DISC_D]})
+        await db.execute(text("DELETE FROM guild_configs WHERE guild_id = :gid"), {"gid": _GUILD})
+
+    await _cleanup()  # pre-clean shared guild rows
+
+    try:
+        async with _pg_factory() as db, db.begin():
+            cfg = await ConfigRepository().create_default_config(db, _GUILD, commit=False)
+            cfg.discussion_channel_id = 43000
+
+            db.add(User(id=_DISC_C, discord_username="Ranked"))
+            db.add(User(id=_DISC_D, discord_username="ZeroScore"))
+            await db.flush()
+
+            pa = Player(user_id=_DISC_C, guild_id=_GUILD, credits=1000)
+            pb = Player(user_id=_DISC_D, guild_id=_GUILD, credits=1000)
+            db.add(pa)
+            db.add(pb)
+            await db.flush()
+            player_a_id = pa.id
+            player_b_id = pb.id
+
+            ev = GameEvent(
+                guild_id=_GUILD,
+                type_slug="bounty_caps",
+                params={},
+                duration_days=7,
+                state="active",
+                created_by_user_id=_DISC_C,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(ev)
+            await db.flush()
+            ev_id = ev.id
+
+            # 1st-place 500 + participation 50
+            db.add(GameEventPrize(event_id=ev_id, rank_from=1, rank_to=1, kind="credits", item_ref=None, qty=500))
+            db.add(GameEventPrize(event_id=ev_id, rank_from=None, rank_to=None, kind="credits", item_ref=None, qty=50))
+
+            # A: 10 captures, 10 checks → ranked (rank 1, score 10)
+            db.add(GameEventMetric(event_id=ev_id, player_id=player_a_id, metric="captures", value=10))
+            db.add(GameEventMetric(event_id=ev_id, player_id=player_a_id, metric="checks", value=10))
+            # B: 0 captures, 5 checks → qualified but 0-score → unranked
+            db.add(GameEventMetric(event_id=ev_id, player_id=player_b_id, metric="captures", value=0))
+            db.add(GameEventMetric(event_id=ev_id, player_id=player_b_id, metric="checks", value=5))
+
+        assert ev_id is not None
+
+        channel_url = _CHANNEL_URL_TMPL.format(channel_id=43000)
+        member_data = [{"user": {"id": str(_DISC_C)}}, {"user": {"id": str(_DISC_D)}}]
+        with respx.mock:
+            respx.get(_MEMBERS_URL).mock(return_value=Response(200, json={"data": member_data}))
+            respx.post(channel_url).mock(return_value=Response(200, json={"id": "1"}))
+            async with _pg_factory() as db, db.begin():
+                ev = (await db.execute(select(GameEvent).where(GameEvent.id == ev_id))).scalar_one()
+                summary = await end_event(db, ev, payout=True, actor_user_id=_DISC_C)
+
+        assert summary.get("status") == "ok"
+
+        # --- Assert DB state ---
+        async with _pg_factory() as db:
+            results = (await db.execute(select(EventResult).where(EventResult.event_id == ev_id))).scalars().all()
+            assert len(results) == 2
+
+            r_a = next(r for r in results if r.player_id == player_a_id)
+            r_b = next(r for r in results if r.player_id == player_b_id)
+
+            # A ranked (rank 1), B unranked (rank IS NULL)
+            assert r_a.rank == 1, f"ranked player rank={r_a.rank}"
+            assert r_b.rank is None, f"zero-scorer rank should be NULL, got {r_b.rank}"
+
+            pa = (await db.execute(select(Player).where(Player.id == player_a_id))).scalar_one()
+            pb = (await db.execute(select(Player).where(Player.id == player_b_id))).scalar_one()
+            assert pa.credits == 1550, f"A: expected 1550 (1000+500+50), got {pa.credits}"
+            assert pb.credits == 1050, f"B: expected 1050 (1000+50), got {pb.credits}"
+
+        # --- final_standings: B listed last (nulls_last), rank mapped to 0 ---
+        async with _pg_factory() as db:
+            ev = (await db.execute(select(GameEvent).where(GameEvent.id == ev_id))).scalar_one()
+            fs = await final_standings(db, ev)
+
+        assert len(fs) == 2
+        assert fs[-1]["player_id"] == player_b_id, "zero-scorer should sort last"
+        assert fs[-1]["rank"] == 0, f"rank mapped to 0 for unranked, got {fs[-1]['rank']}"
+        assert fs[0]["rank"] == 1
+
+    finally:
+        await _cleanup(ev_id)
+        async with _pg_factory() as db, db.begin():
+            await db.execute(text("DELETE FROM players WHERE user_id = ANY(:ids)"), {"ids": [_DISC_C, _DISC_D]})
+            await db.execute(text("DELETE FROM users WHERE id = ANY(:ids)"), {"ids": [_DISC_C, _DISC_D]})

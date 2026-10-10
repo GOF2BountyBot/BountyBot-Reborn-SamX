@@ -977,3 +977,201 @@ async def test_lossless_event_participation_paid(engine_and_factory):
     async with factory() as db:
         p = (await db.execute(select(Player))).scalar_one()
         assert p.credits == 3000, f"Expected 3000 credits (participation prize), got {p.credits}"
+
+
+# ---------------------------------------------------------------------------
+# Issue #125 — 0-scorer ranking fix
+# ---------------------------------------------------------------------------
+
+
+async def test_zero_scorers_unranked_no_placing_prize(engine_and_factory):
+    """All qualified players score 0 → no placing prizes, participation paid to all, rank=None."""
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=6001)
+        db.add(cfg)
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=1000))  # 1st place: 1000 credits (must NOT be paid)
+        db.add(_make_prize(ev.id, None, None, qty=50))  # participation: 50 credits
+        for did in [6101, 6102, 6103]:
+            db.add(_make_user(did, f"P{did}"))
+            await db.flush()
+            db.add(_make_player(did, credits=0))
+        await db.commit()
+
+    async with factory() as db:
+        players = (await db.execute(select(Player))).scalars().all()
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        for p in players:
+            # qualified (checks >= 1) but 0 captures → score 0
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=5))
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=0))
+        ev.state = "active"
+        await db.commit()
+
+    channel_url = _CHANNEL_URL_TMPL.format(channel_id=6001)
+    with respx.mock:
+        respx.get(_MEMBERS_URL).mock(return_value=_member_resp([6101, 6102, 6103]))
+        respx.post(channel_url).mock(return_value=_ok_resp())
+
+        async with factory() as db, db.begin():
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            result = await end_event(db, ev, payout=True)
+
+    assert result.get("ranked_players") == 3
+
+    async with factory() as db:
+        results = (await db.execute(select(EventResult))).scalars().all()
+        assert len(results) == 3
+        assert all(r.rank is None for r in results), f"all should be unranked: {[r.rank for r in results]}"
+        assert all(r.status == "ok" for r in results)
+
+        for p in (await db.execute(select(Player))).scalars().all():
+            # participation (50) paid; 1st-place (1000) NOT paid
+            assert p.credits == 50, f"player {p.id} expected 50 (participation only), got {p.credits}"
+
+
+async def test_mixed_field_zero_scorers_unranked_3rd_prize_unpaid(engine_and_factory):
+    """Mixed field (30, 10, 0, 0): 0-scorers unranked, get only participation; 3rd prize unpaid."""
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=6002)
+        db.add(cfg)
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=500))  # 1st
+        db.add(_make_prize(ev.id, 2, 2, qty=300))  # 2nd
+        db.add(_make_prize(ev.id, 3, 3, qty=100))  # 3rd (must NOT be paid — no rank-3 player)
+        db.add(_make_prize(ev.id, None, None, qty=50))  # participation
+        for did in [6201, 6202, 6203, 6204]:
+            db.add(_make_user(did, f"P{did}"))
+            await db.flush()
+            db.add(_make_player(did, credits=0))
+        await db.commit()
+
+    async with factory() as db:
+        players = (await db.execute(select(Player))).scalars().all()
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        scores = {6201: 30, 6202: 10, 6203: 0, 6204: 0}
+        for p in players:
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=scores[p.user_id]))
+            # 0-scorers still need checks >= 1 to qualify
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=max(scores[p.user_id], 5)))
+        ev.state = "active"
+        await db.commit()
+
+    channel_url = _CHANNEL_URL_TMPL.format(channel_id=6002)
+    with respx.mock:
+        respx.get(_MEMBERS_URL).mock(return_value=_member_resp([6201, 6202, 6203, 6204]))
+        respx.post(channel_url).mock(return_value=_ok_resp())
+
+        async with factory() as db, db.begin():
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            await end_event(db, ev, payout=True)
+
+    async with factory() as db:
+        players_by_uid = {p.user_id: p for p in (await db.execute(select(Player))).scalars().all()}
+        results_by_pid = {r.player_id: r for r in (await db.execute(select(EventResult))).scalars().all()}
+
+        pa, pb, pc, pd_ = (players_by_uid[d] for d in [6201, 6202, 6203, 6204])
+        ra, rb, rc, rd = (results_by_pid[p.id] for p in [pa, pb, pc, pd_])
+
+        assert ra.rank == 1 and pa.credits == 550, f"A: rank={ra.rank} credits={pa.credits}"  # 500+50
+        assert rb.rank == 2 and pb.credits == 350, f"B: rank={rb.rank} credits={pb.credits}"  # 300+50
+        assert rc.rank is None and pc.credits == 50, f"C: rank={rc.rank} credits={pc.credits}"  # 50 only
+        assert rd.rank is None and pd_.credits == 50, f"D: rank={rd.rank} credits={pd_.credits}"  # 50 only
+
+
+async def test_nonzero_tie_skips_rank(engine_and_factory):
+    """Nonzero tie (20, 20, 5): both 20s rank 1, the 5 is rank 3 (2nd skipped)."""
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=6003)
+        db.add(cfg)
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=500))  # 1st
+        db.add(_make_prize(ev.id, 2, 2, qty=300))  # 2nd (no rank-2 player → unpaid)
+        db.add(_make_prize(ev.id, 3, 3, qty=100))  # 3rd
+        for did in [6301, 6302, 6303]:
+            db.add(_make_user(did, f"P{did}"))
+            await db.flush()
+            db.add(_make_player(did, credits=0))
+        await db.commit()
+
+    async with factory() as db:
+        players = (await db.execute(select(Player))).scalars().all()
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        scores = {6301: 20, 6302: 20, 6303: 5}
+        for p in players:
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=scores[p.user_id]))
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=scores[p.user_id]))
+        ev.state = "active"
+        await db.commit()
+
+    channel_url = _CHANNEL_URL_TMPL.format(channel_id=6003)
+    with respx.mock:
+        respx.get(_MEMBERS_URL).mock(return_value=_member_resp([6301, 6302, 6303]))
+        respx.post(channel_url).mock(return_value=_ok_resp())
+
+        async with factory() as db, db.begin():
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            await end_event(db, ev, payout=True)
+
+    async with factory() as db:
+        players_by_uid = {p.user_id: p for p in (await db.execute(select(Player))).scalars().all()}
+        results_by_pid = {r.player_id: r for r in (await db.execute(select(EventResult))).scalars().all()}
+
+        pa, pb, pc = (players_by_uid[d] for d in [6301, 6302, 6303])
+        ra, rb, rc = (results_by_pid[p.id] for p in [pa, pb, pc])
+
+        assert ra.rank == 1 and pa.credits == 500, f"A: rank={ra.rank} credits={pa.credits}"
+        assert rb.rank == 1 and pb.credits == 500, f"B: rank={rb.rank} credits={pb.credits}"
+        assert rc.rank == 3 and pc.credits == 100, f"C: rank={rc.rank} credits={pc.credits}"
+
+
+async def test_live_standings_zero_scorer_rank_none(engine_and_factory):
+    """live_standings: a qualified 0-scorer gets rank=None; a nonzero scorer gets rank 1."""
+    from services.event_service import live_standings
+
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        db.add(GuildConfig(guild_id=GUILD_ID, discussion_channel_id=6004))
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_user(6401, "Scorer"))
+        db.add(_make_user(6402, "Zero"))
+        await db.flush()
+        pscorer = _make_player(6401)
+        pzero = _make_player(6402)
+        db.add(pscorer)
+        db.add(pzero)
+        await db.flush()
+        ev.state = "active"
+        db.add(GameEventMetric(event_id=ev.id, player_id=pscorer.id, metric="captures", value=10))
+        db.add(GameEventMetric(event_id=ev.id, player_id=pscorer.id, metric="checks", value=10))
+        db.add(GameEventMetric(event_id=ev.id, player_id=pzero.id, metric="captures", value=0))
+        db.add(GameEventMetric(event_id=ev.id, player_id=pzero.id, metric="checks", value=5))
+        await db.commit()
+
+    async with factory() as db:
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        standings_out = await live_standings(db, ev)
+
+    assert len(standings_out) == 2
+    scorer_row = next(r for r in standings_out if r["value"] > 0)
+    zero_row = next(r for r in standings_out if r["value"] == 0.0)
+
+    assert scorer_row["qualified"] is True
+    assert scorer_row["rank"] == 1, f"scorer rank={scorer_row['rank']}"
+    assert zero_row["qualified"] is True
+    assert zero_row["rank"] is None, f"zero-scorer rank should be None, got {zero_row['rank']}"

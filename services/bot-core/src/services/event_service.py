@@ -275,7 +275,7 @@ async def live_standings(session: AsyncSession, event: GameEvent) -> list[dict]:
     out: list[dict] = []
     for pid, val, qual in raw:
         p = players_by_id.get(pid)
-        rk: int | None = (1 + sum(1 for v in qual_vals if v > val)) if qual else None
+        rk: int | None = (1 + sum(1 for v in qual_vals if v > val)) if (qual and val > 0) else None
         out.append(
             {
                 "player_id": pid,
@@ -301,7 +301,7 @@ async def final_standings(session: AsyncSession, event: GameEvent) -> list[dict]
     from sqlalchemy.orm import selectinload
 
     er_result = await session.execute(
-        select(EventResult).where(EventResult.event_id == event.id).order_by(EventResult.rank)
+        select(EventResult).where(EventResult.event_id == event.id).order_by(EventResult.rank.asc().nulls_last())
     )
     results = er_result.scalars().all()
     player_ids = [r.player_id for r in results]
@@ -624,11 +624,13 @@ async def end_event(
     if member_ids is not None:
         qual = [(pid, val) for pid, val in qual if players_by_id.get(pid) and players_by_id[pid].user_id in member_ids]
 
-    # Competition rank: 1 + count of players with strictly greater value
-    def _rank(player_val: float) -> int:
+    # Competition rank: 1 + count of players with strictly greater value; None for 0-scorers.
+    def _rank(player_val: float) -> int | None:
+        if player_val <= 0:
+            return None
         return 1 + sum(1 for _, v in qual if v > player_val)
 
-    ranked: list[tuple[int, float, int]] = [(pid, val, _rank(val)) for pid, val in qual]
+    ranked: list[tuple[int, float, int | None]] = [(pid, val, _rank(val)) for pid, val in qual]
 
     # Load prize slots
     prize_result = await session.execute(select(GameEventPrize).where(GameEventPrize.event_id == event.id))
@@ -647,7 +649,9 @@ async def end_event(
             slot_players = ranked
         else:
             rank_to = slot.rank_to if slot.rank_to is not None else slot.rank_from
-            slot_players = [(pid, val, rk) for pid, val, rk in ranked if slot.rank_from <= rk <= rank_to]
+            slot_players = [
+                (pid, val, rk) for pid, val, rk in ranked if rk is not None and slot.rank_from <= rk <= rank_to
+            ]
 
         for pid, _val, rk in slot_players:
             player = players_by_id.get(pid)
@@ -726,7 +730,7 @@ async def end_event(
     winner_summary = {
         str(pid): {"rank": rk, "value": val, "prize": "; ".join(prize_parts.get(pid, []))}
         for pid, val, rk in ranked
-        if rk <= 3
+        if rk is not None and rk <= 3
     }
     failures = [
         f"player_id={pid}: partial mint failure (slot details in ERROR log)"
@@ -756,10 +760,11 @@ async def end_event(
         val_str = et.fmt(val) if et else str(val)
         pz = "; ".join(prize_parts.get(pid, []))
         suffix = f" · {pz}" if pz else ""
-        standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}{suffix}")
+        rank_str = _ordinal(rk) if rk is not None else "—"
+        standing_lines.append(f"{rank_str}: **{name}** — {val_str}{suffix}")
     # @mention the top-3 placed winners — but only those who still want event pings (opt-out is honoured;
     # opted-out winners are still listed by name in the embed above).
-    top_mention_pids = {pid for pid, _, rk in ranked if rk <= 3}
+    top_mention_pids = {pid for pid, _, rk in ranked if rk is not None and rk <= 3}
     mention_str = " ".join(
         f"<@{players_by_id[pid].user_id}>"
         for pid in sorted(top_mention_pids)

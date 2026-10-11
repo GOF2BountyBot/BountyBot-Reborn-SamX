@@ -112,6 +112,7 @@ for _key in list(sys.modules):
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 
 # ---------------------------------------------------------------------------
 # Autouse fixture: repair the module environment before every test in this
@@ -315,7 +316,7 @@ class TestLifespan:
             patch("persist.database.migration_manager.MigrationManager", mock_mm_class),
             patch("main.initialize_schema", new_callable=AsyncMock, return_value=mock_schema_mgr),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_engine"),
+            patch("main.create_engine") as mock_create_engine,
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
@@ -335,6 +336,10 @@ class TestLifespan:
 
             # Verify shutdown
             mock_db_mgr.shutdown.assert_called_once()
+
+            # The job-store URL must name a driver that is installed: under SQLAlchemy 2.1 a bare
+            # postgresql:// means psycopg (v3) and the real create_engine() fails at startup.
+            create_engine(mock_create_engine.call_args.args[0]).dispose()
 
     @pytest.mark.asyncio
     async def test_lifespan_b23b_announcement_cleanup_called_for_stale_bounties(self):

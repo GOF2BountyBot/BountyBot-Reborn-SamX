@@ -472,7 +472,9 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.info("⏰ Initializing Scheduler…")
 
         # derive a sync URL and engine for APScheduler
-        sync_url = db_manager._connection_string.replace("postgresql+asyncpg", "postgresql")
+        from persist.database.migration_manager import _async_to_sync_url
+
+        sync_url = _async_to_sync_url(db_manager._connection_string)  # explicit psycopg2 driver (SQLAlchemy 2.1)
         sync_engine = create_engine(
             sync_url,
             echo=False,

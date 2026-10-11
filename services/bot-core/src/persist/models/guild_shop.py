@@ -28,7 +28,6 @@ class GuildShop(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     price: Mapped[int] = mapped_column(Integer, nullable=False)  # Cost in credits
     last_restocked: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
-    refresh_interval_hours: Mapped[int] = mapped_column(Integer, default=12)  # Hours between refreshes
 
     # Relationships
     guild_config: Mapped["GuildConfig"] = relationship("GuildConfig", back_populates="shops", foreign_keys=[guild_id])
@@ -38,10 +37,3 @@ class GuildShop(Base):
             f"<GuildShop(guild_id={self.guild_id}, tier='{self.tier}', "
             f"item='{self.item_name}', qty={self.quantity}, price={self.price})>"
         )
-
-    def is_refresh_due(self) -> bool:
-        """Check if this shop item is due for refresh based on its interval."""
-        if not self.last_restocked:
-            return True
-        hours_since_restock = (datetime.now(UTC) - self.last_restocked).total_seconds() / 3600
-        return hours_since_restock >= self.refresh_interval_hours

@@ -315,6 +315,10 @@ class GameConstants:
     # Timers (seconds)
     # ------------------------------------------------------------------
 
+    # Per-guild shop refresh schedule defaults (rev 0038)
+    SHOP_REFRESH_INTERVAL_HOURS: int = 6  # Hours between automatic shop restocks (1–24)
+    SHOP_REFRESH_JITTER_PCT: int = 0  # ±% random variation on the interval (0–50; 0 = exact)
+
     # SHOP_REFRESH_INTERVAL — retired rev 0031 (zero readers; the shop_refresh
     # scheduler job cron is defined in DEFAULT_SCHEDULER_JOBS, not from this).
     CHECK_COOLDOWN: int = 180  # 3 minutes

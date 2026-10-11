@@ -1505,7 +1505,6 @@ class TestRefreshShop:
             quantity=3,
             price=500,
             last_restocked=datetime(2026, 3, 10, 9, 30, 0, tzinfo=UTC),
-            refresh_interval_hours=24,
             # Enrichment fields absent on real GuildShop ORM object (no attr → None)
         )
         mock_shop_service.refresh_shop = AsyncMock(

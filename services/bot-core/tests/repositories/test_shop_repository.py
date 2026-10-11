@@ -40,7 +40,6 @@ def _make_shop_item(**overrides) -> MagicMock:
         quantity=5,
         price=1000,
         last_restocked=datetime.now(UTC),
-        refresh_interval_hours=12,
     )
     defaults.update(overrides)
     obj = MagicMock(spec=GuildShop)
@@ -253,19 +252,6 @@ class TestGetGuildShopsSummary:
         mock_db.execute = AsyncMock(side_effect=Exception("summary fail"))
         with pytest.raises(Exception, match="summary fail"):
             await repo.get_guild_shops_summary(mock_db, guild_id=100)
-
-
-# ===================================================================
-# get_items_due_for_refresh – exception path (lines 281-294)
-# ===================================================================
-
-
-class TestGetItemsDueForRefresh:
-    @pytest.mark.asyncio
-    async def test_get_items_due_for_refresh_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("refresh fail"))
-        with pytest.raises(Exception, match="refresh fail"):
-            await repo.get_items_due_for_refresh(mock_db, guild_id=100)
 
 
 # ===================================================================

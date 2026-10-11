@@ -244,7 +244,7 @@ services/bot-core/
 | `players.py` | `/players` | players | POST / (create-or-get), GET /{id}, GET /guild/{id}, PUT /{id}/credits, PUT /{id}/xp, POST /{id}/prestige, GET /{id}/statistics, GET /{id}/promotion-status, GET /{id}/combat-preflight, PUT /{id}/promote, PUT /{id}/demote, GET /{id}/loadout, PUT /{guild_id}/{user_id}/cooldown/reset, POST /transfer |
 | `scheduler.py` | *(none)* | job-scheduler | GET /jobs, GET /jobs/{id}, POST /jobs (one-time), POST /jobs/recurring, PUT /jobs/{id}, DELETE /jobs/all, DELETE /jobs/guild/{id}, DELETE /jobs/{id}, POST /reset |
 | `ships.py` | `/ships` | ships | GET /player/{id}, GET /{ship_id}, POST / (grant), GET /player/{id}/active, PUT /{id}/set-active, PUT /{id}/loadout, PUT /{id}/nickname, POST /{id}/equip-check, POST /{id}/equip, POST /{id}/unequip, GET /{id}/loadout, DELETE /{id}, POST /transfer — player ship ownership (ship *definitions* live under /about) |
-| `shops.py` | `/shops` | shops | GET /guild/{id}/tier/{tier}, GET /guild/{id}/summary, POST /purchase, POST /purchase-ship, POST /sell, POST /sell-ship, POST /refresh, GET /guild/{id}/tier/{tier}/stats, GET …/tech-level/{tl}, GET /guild/{id}/refresh-status, GET /item/{shop_item_id}, PUT /guild/{id}/prices |
+| `shops.py` | `/shops` | shops | GET /guild/{id}/tier/{tier}, GET /guild/{id}/summary, POST /purchase, POST /purchase-ship, POST /sell, POST /sell-ship, POST /refresh, GET /guild/{id}/tier/{tier}/stats, GET …/tech-level/{tl}, GET /item/{shop_item_id}, PUT /guild/{id}/prices |
 | `systems.py` | `/systems` | systems | GET /route?start&end (A* pathfinding), GET /route/map (PNG, bounded LRU cache) |
 | `users.py` | `/users` | users | POST /, GET /{user_id}, PUT /{user_id}, GET /, POST /{user_id}/get-or-create |
 
@@ -333,7 +333,7 @@ Base (DeclarativeBase)
 | `primary_weapon_repository.py` | `PrimaryWeaponRepository` | PrimaryWeapon get_by_name + upsert |
 | `secondary_weapon_repository.py` | `SecondaryWeaponRepository` | SecondaryWeapon get_by_name + upsert |
 | `ship_repository.py` | `ShipRepository` | Ship upsert on top of GenericRepository |
-| `shop_repository.py` | `ShopRepository` | GuildShop CRUD + get_shop_items(_by_types), get_shop_item_by_name, update_quantity, clear_shop_tier, clear_all_guild_shops, get_guild_shops_summary, get_items_by_tech_level, update_prices, get_items_due_for_refresh, get_shop_statistics |
+| `shop_repository.py` | `ShopRepository` | GuildShop CRUD + get_shop_items(_by_types), get_shop_item_by_name, update_quantity, clear_shop_tier, clear_all_guild_shops, get_guild_shops_summary, get_items_by_tech_level, update_prices, get_shop_statistics |
 | `system_repository.py` | `SystemRepository` | System upsert on top of GenericRepository |
 | `turret_weapon_repository.py` | `TurretWeaponRepository` | TurretWeapon get_by_name + upsert |
 | `user_repository.py` | `UserRepository` | User CRUD + get_by_discord_id, get_by_ids, get_or_create_user |

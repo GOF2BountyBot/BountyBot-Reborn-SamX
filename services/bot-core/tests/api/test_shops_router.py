@@ -25,7 +25,6 @@ def make_mock_shop_item(**overrides):
         quantity=5,
         price=100,
         last_restocked=datetime(2026, 1, 1),
-        refresh_interval_hours=24,
     )
     defaults.update(overrides)
     item = MagicMock()
@@ -69,7 +68,6 @@ def mock_shop_service():
     service.refresh_shop = AsyncMock(return_value={"refreshed": True, "items_count": 10})
     service.shop_repo.get_shop_statistics = AsyncMock(return_value={"total_items": 10, "avg_price": 150})
     service.shop_repo.get_items_by_tech_level = AsyncMock(return_value=[make_mock_shop_item()])
-    service.shop_repo.get_items_due_for_refresh = AsyncMock(return_value=[])
     service.shop_repo.get_by_id = AsyncMock(return_value=make_mock_shop_item())
     service.shop_repo.update_prices = AsyncMock(return_value=10)
     service.purchase_ship = AsyncMock(
@@ -176,7 +174,6 @@ class TestGetShopItems:
         assert item["item_name"] == "Pulse Laser"
         assert item["quantity"] == 5
         assert item["price"] == 100
-        assert item["refresh_interval_hours"] == 24
 
     @patch("api.routers.shops.get_db_session")
     def test_get_shop_items_with_item_type_filter(self, mock_get_db, client, mock_shop_service):
@@ -553,7 +550,6 @@ class TestRefreshShop:
             quantity=5,
             price=200,
             last_restocked=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
-            refresh_interval_hours=12,
             # Enrichment fields absent on real GuildShop ORM object (no attr → None)
         )
         mock_shop_service.refresh_shop = AsyncMock(
@@ -697,62 +693,6 @@ class TestGetItemsByTechLevel:
 
         assert response.status_code == 500
         assert "Failed to get items by tech level" in response.json()["detail"]
-
-
-# ===========================================================================
-# 8. GET /shops/guild/{guild_id}/refresh-status
-# ===========================================================================
-
-
-class TestGetRefreshStatus:
-    """Tests for GET /api/v1/shops/guild/{guild_id}/refresh-status."""
-
-    @patch("api.routers.shops.get_db_session")
-    def test_get_refresh_status_no_items_due(self, mock_get_db, client, mock_shop_service):
-        """Returns 200 with needs_refresh=False when no items are due."""
-        _configure_db_mock(mock_get_db)
-        mock_shop_service.shop_repo.get_items_due_for_refresh = AsyncMock(return_value=[])
-
-        response = client.get("/api/v1/shops/guild/67890/refresh-status")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["guild_id"] == 67890
-        assert data["total_items_due_for_refresh"] == 0
-        assert data["due_by_tier"] == {}
-        assert data["needs_refresh"] is False
-
-    @patch("api.routers.shops.get_db_session")
-    def test_get_refresh_status_with_items_due(self, mock_get_db, client, mock_shop_service):
-        """Returns 200 with needs_refresh=True and counts grouped by tier."""
-        _configure_db_mock(mock_get_db)
-        due_items = [
-            make_mock_shop_item(tier="Bronze"),
-            make_mock_shop_item(tier="Bronze", id=2),
-            make_mock_shop_item(tier="Silver", id=3),
-        ]
-        mock_shop_service.shop_repo.get_items_due_for_refresh = AsyncMock(return_value=due_items)
-
-        response = client.get("/api/v1/shops/guild/67890/refresh-status")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["guild_id"] == 67890
-        assert data["total_items_due_for_refresh"] == 3
-        assert data["due_by_tier"]["Bronze"] == 2
-        assert data["due_by_tier"]["Silver"] == 1
-        assert data["needs_refresh"] is True
-
-    @patch("api.routers.shops.get_db_session")
-    def test_get_refresh_status_server_error_returns_500(self, mock_get_db, client, mock_shop_service):
-        """Returns 500 when repo raises an unexpected exception."""
-        _configure_db_mock(mock_get_db)
-        mock_shop_service.shop_repo.get_items_due_for_refresh.side_effect = RuntimeError("Repo failed")
-
-        response = client.get("/api/v1/shops/guild/67890/refresh-status")
-
-        assert response.status_code == 500
-        assert "Failed to get refresh status" in response.json()["detail"]
 
 
 # ===========================================================================

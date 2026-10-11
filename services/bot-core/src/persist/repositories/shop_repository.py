@@ -339,21 +339,6 @@ class ShopRepository(IRepository[GuildShop]):
                 await db.rollback()
             raise
 
-    async def get_items_due_for_refresh(self, db: AsyncSession, guild_id: int) -> list[GuildShop]:
-        """Get all shop items that are due for refresh based on their intervals."""
-        try:
-            result = await db.execute(select(GuildShop).where(GuildShop.guild_id == guild_id))
-            items = result.scalars().all()
-
-            # Filter items that are due for refresh
-            due_items = [item for item in items if item.is_refresh_due()]
-
-            flogger.debug(f"Found {len(due_items)} items due for refresh in guild {guild_id}")
-            return due_items
-        except Exception as e:
-            flogger.error(f"Error getting items due for refresh in guild {guild_id}: {e}")
-            raise
-
     async def get_shop_statistics(self, db: AsyncSession, guild_id: int, tier: str) -> dict:
         """Get detailed statistics for a specific shop."""
         try:

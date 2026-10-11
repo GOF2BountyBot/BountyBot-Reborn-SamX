@@ -96,8 +96,9 @@ _NEW_LOOT_FIELDS = (
 # Rev 0032: +22 combat engine constants → 117
 # Rev 0033: −7 JSONB dict fields (division_max_tl, bounty_division_reward_mult,
 #   primary_tl_band_weights, criminal_{cloak,booster,emergency,weaponmod}_chance_by_division) → 110
+# Rev 0038: +2 shop refresh schedule overrides (shop_refresh_interval_hours, shop_refresh_jitter_pct) → 112
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 110
+_EXPECTED_SLASH_FIELD_COUNT = 112
 
 
 def _evict_discord_modules():
@@ -174,9 +175,9 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_110(self, mock_admin_cog):
+    def test_slash_field_count_is_112(self, mock_admin_cog):
         # Locks the slash-settable surface (see _EXPECTED_SLASH_FIELD_COUNT above).
-        # Rev 0033: 7 JSONB dict fields retired → 110 total.
+        # Rev 0038: +2 shop refresh schedule overrides → 112 total.
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "kaamo_max_capacity" not in mock_admin_cog._GAME_CONSTANT_FIELDS

@@ -93,6 +93,9 @@ def make_mock_config(**overrides):
         loot_commodity_sell_fraction=None,
         # Shop module-draw combat/filler split
         shop_combat_module_prob=None,
+        # Shop refresh schedule per-guild overrides (rev 0038)
+        shop_refresh_interval_hours=None,
+        shop_refresh_jitter_pct=None,
         # D-trivial + DIVISION_TL_CENTERS scalar overrides (revision 0028) — all null by default
         criminal_secondary_min_damage=None,
         shop_secondary_qty_scaler_heavy=None,
@@ -236,6 +239,9 @@ _OVERRIDE_FIELD_NAMES = [
     "loot_commodity_sell_fraction",
     # Shop module-draw combat/filler split
     "shop_combat_module_prob",
+    # Shop refresh schedule per-guild overrides (rev 0038)
+    "shop_refresh_interval_hours",
+    "shop_refresh_jitter_pct",
     # D-trivial + DIVISION_TL_CENTERS scalar overrides (issue #70, revision 0028)
     "criminal_secondary_min_damage",
     "shop_secondary_qty_scaler_heavy",

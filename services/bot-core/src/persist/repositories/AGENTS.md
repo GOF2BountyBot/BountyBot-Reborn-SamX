@@ -212,7 +212,7 @@ This is constructor injection. Repositories hold no state other than the model c
 | `primary_weapon_repository.py` | `PrimaryWeaponRepository` | `PrimaryWeapon` | get_by_name override, create_or_update |
 | `secondary_weapon_repository.py` | `SecondaryWeaponRepository` | `SecondaryWeapon` | get_by_name override, create_or_update |
 | `ship_repository.py` | `ShipRepository` | `Ship` | create_or_update (JSON-seed mapper) |
-| `shop_repository.py` | `ShopRepository` | `GuildShop` | get_shop_items, get_shop_items_by_types, get_shop_item_by_name, update_quantity, clear_shop_tier, clear_all_guild_shops, get_guild_shops_summary, get_items_by_tech_level, update_prices, get_items_due_for_refresh, get_shop_statistics, count |
+| `shop_repository.py` | `ShopRepository` | `GuildShop` | get_shop_items, get_shop_items_by_types, get_shop_item_by_name, update_quantity, clear_shop_tier, clear_all_guild_shops, get_guild_shops_summary, get_items_by_tech_level, update_prices, get_shop_statistics, count |
 | `system_repository.py` | `SystemRepository` | `System` | create_or_update (JSON-seed mapper) |
 | `turret_weapon_repository.py` | `TurretWeaponRepository` | `TurretWeapon` | get_by_name override, create_or_update |
 | `user_repository.py` | `UserRepository` | `User` | get_by_discord_id, get_by_ids, get_or_create_user, count |

@@ -130,6 +130,8 @@ FIELD_TO_CATALOG_ROW: dict[str, str] = {
     "loot_band3_qty_mode": "LOOT_BAND3_QTY_MODE",
     "loot_commodity_sell_fraction": "LOOT_COMMODITY_SELL_FRACTION",
     "shop_combat_module_prob": "SHOP_COMBAT_MODULE_PROB",
+    "shop_refresh_interval_hours": "SHOP_REFRESH_INTERVAL_HOURS",
+    "shop_refresh_jitter_pct": "SHOP_REFRESH_JITTER_PCT",
     "shop_secondary_qty_scaler_heavy": "SHOP_SECONDARY_QTY_SCALER_HEAVY",
     "shop_secondary_qty_scaler_standard": "SHOP_SECONDARY_QTY_SCALER_STANDARD",
     "shop_tl_band_lo_bronze": "SHOP_TL_BAND_LO_BRONZE",
@@ -393,6 +395,13 @@ FIELD_DESCRIPTIONS: dict[str, str] = {
     "shop_combat_module_prob": (
         "How often the shop stocks a combat-ready module (0 = always filler, 1 = always"
         " combat); default 0.75 means roughly 3 in 4 module slots are combat-tier."
+    ),
+    "shop_refresh_interval_hours": (
+        "Hours between automatic shop restocks (1–24; default 6). A change applies from the next restock."
+    ),
+    "shop_refresh_jitter_pct": (
+        "Random ± variation on each restock gap, in percent (0–50; 0 = exact interval)."
+        " E.g. 6 h at 50 → 3–9 h. A change applies from the next restock."
     ),
     "shop_secondary_qty_scaler_heavy": (
         "Controls how many rounds of heavy weapons (nukes, shock-blasts) appear per shop"

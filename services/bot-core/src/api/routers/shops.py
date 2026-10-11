@@ -136,7 +136,6 @@ async def get_shop_items(
                     quantity=item.quantity,
                     price=item.price,
                     last_restocked=item.last_restocked.isoformat(),
-                    refresh_interval_hours=item.refresh_interval_hours,
                     emoji=emoji_map.get(item.item_name),
                     dps=stat_map.get(item.item_name, {}).get("dps"),
                     shield=stat_map.get(item.item_name, {}).get("shield"),
@@ -382,7 +381,6 @@ async def get_items_by_tech_level(
                     quantity=item.quantity,
                     price=item.price,
                     last_restocked=item.last_restocked.isoformat(),
-                    refresh_interval_hours=item.refresh_interval_hours,
                     emoji=emoji_map.get(item.item_name),
                     dps=stat_map.get(item.item_name, {}).get("dps"),
                     shield=stat_map.get(item.item_name, {}).get("shield"),
@@ -398,36 +396,6 @@ async def get_items_by_tech_level(
         flogger.error(f"Error getting items by tech level: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get items by tech level"
-        ) from e
-
-
-@router.get("/guild/{guild_id}/refresh-status")
-async def get_refresh_status(guild_id: int, shop_service: ShopService = Depends(get_shop_service)):
-    """Get refresh status for all shops in a guild."""
-    flogger.debug(f"Getting refresh status for guild {guild_id}")
-
-    try:
-        async with get_db_session() as db:
-            due_items = await shop_service.shop_repo.get_items_due_for_refresh(db, guild_id)
-
-            # Group by tier
-            due_by_tier = {}
-            for item in due_items:
-                if item.tier not in due_by_tier:
-                    due_by_tier[item.tier] = 0
-                due_by_tier[item.tier] += 1
-
-            return {
-                "guild_id": guild_id,
-                "total_items_due_for_refresh": len(due_items),
-                "due_by_tier": due_by_tier,
-                "needs_refresh": len(due_items) > 0,
-            }
-
-    except Exception as e:
-        flogger.error(f"Error getting refresh status: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get refresh status"
         ) from e
 
 
@@ -461,7 +429,6 @@ async def get_shop_item(shop_item_id: int, shop_service: ShopService = Depends(g
                 quantity=item.quantity,
                 price=item.price,
                 last_restocked=item.last_restocked.isoformat(),
-                refresh_interval_hours=item.refresh_interval_hours,
                 emoji=item_emoji,
                 dps=item_stats.get("dps"),
                 shield=item_stats.get("shield"),

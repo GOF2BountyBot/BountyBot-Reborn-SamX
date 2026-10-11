@@ -276,6 +276,14 @@ class GuildConfig(Base):
     # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
     shop_combat_module_prob: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
+    # Shop refresh schedule per-guild overrides (NULL == GameConstants default)
+    # shop_refresh_interval_hours: hours between shop restocks (1–24; NULL == SHOP_REFRESH_INTERVAL_HOURS)
+    shop_refresh_interval_hours: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # shop_refresh_jitter_pct: ±% variation on restock gap (0–50; NULL == SHOP_REFRESH_JITTER_PCT)
+    shop_refresh_jitter_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # shop_next_refresh_at: rolling state — updated by the executor; NOT an override field
+    shop_next_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
     # ------------------------------------------------------------------
     # Combat System — Phase-1 per-guild overrides (Appendix A constants)
     # NULL == "use GameConstants default". resolve_constant() handles fallback.

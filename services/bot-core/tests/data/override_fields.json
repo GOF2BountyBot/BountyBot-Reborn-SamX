@@ -1,5 +1,5 @@
 {
-  "description": "Canonical per-guild override field list (issue #70). Both services' test suites assert their runtime lists match this file. Location: services/bot-core/tests/data/ — the bot-core container only mounts services/bot-core, so this file lives here; the discord-gateway test suite reads it via repo-root-relative path (the gateway suite runs with the repo root mounted at /app). 110 fields as of rev 0033 (117 from rev 0032 minus 7 JSONB dict fields dropped in rev 0033).",
+  "description": "Canonical per-guild override field list (issue #70). Both services' test suites assert their runtime lists match this file. Location: services/bot-core/tests/data/ — the bot-core container only mounts services/bot-core, so this file lives here; the discord-gateway test suite reads it via repo-root-relative path (the gateway suite runs with the repo root mounted at /app). 112 fields as of rev 0038 (110 from rev 0033 + shop_refresh_interval_hours + shop_refresh_jitter_pct added in rev 0038).",
   "fields": [
     "criminal_max_gear_upgrade",
     "bounty_reward_to_xp_gain_mult",
@@ -36,6 +36,8 @@
     "loot_band3_qty_mode",
     "loot_commodity_sell_fraction",
     "shop_combat_module_prob",
+    "shop_refresh_interval_hours",
+    "shop_refresh_jitter_pct",
     "criminal_secondary_min_damage",
     "shop_secondary_qty_scaler_heavy",
     "shop_secondary_qty_scaler_standard",

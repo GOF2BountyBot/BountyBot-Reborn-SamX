@@ -1693,7 +1693,6 @@ class TestShopItemResponseSchema:
             quantity=2,
             price=5000,
             last_restocked="2026-01-01T12:00:00",
-            refresh_interval_hours=24,
         )
         assert item.tier == "Bronze"
         assert item.price == 5000

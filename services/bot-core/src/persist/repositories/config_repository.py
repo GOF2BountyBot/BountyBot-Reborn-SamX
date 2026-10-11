@@ -256,6 +256,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             "platinum_role_id",
             "shop_announcements_role_id",
             "event_announcements_role_id",
+            "shop_next_refresh_at",
         ]
 
         try:
@@ -525,6 +526,9 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "loot_commodity_sell_fraction": config.loot_commodity_sell_fraction,
                 # Shop module-draw combat/filler split
                 "shop_combat_module_prob": config.shop_combat_module_prob,
+                # Shop refresh schedule per-guild overrides (rev 0038)
+                "shop_refresh_interval_hours": config.shop_refresh_interval_hours,
+                "shop_refresh_jitter_pct": config.shop_refresh_jitter_pct,
                 # D-trivial + DIVISION_TL_CENTERS scalar overrides (revision 0028)
                 "criminal_secondary_min_damage": config.criminal_secondary_min_damage,
                 "shop_secondary_qty_scaler_heavy": config.shop_secondary_qty_scaler_heavy,

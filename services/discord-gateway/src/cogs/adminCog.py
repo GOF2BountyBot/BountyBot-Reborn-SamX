@@ -3125,6 +3125,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "recently_spotted_max_window",
         "demotion_credit_penalty_pct",
         "shop_combat_module_prob",
+        # Shop refresh schedule per-guild overrides (rev 0038)
+        "shop_refresh_interval_hours",
+        "shop_refresh_jitter_pct",
         # D-trivial + DIVISION_TL_CENTERS scalar overrides (revision 0028)
         # Criminal loadout — secondary selection
         "criminal_secondary_min_damage",

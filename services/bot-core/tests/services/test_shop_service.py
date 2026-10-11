@@ -71,11 +71,8 @@ def _make_shop_item(
     price: int = 200,
     last_restocked: datetime | None = None,
     tech_level: int = 1,
-    refresh_interval_hours: int = 12,
 ) -> GuildShop:
-    """Real GuildShop row. ``is_refresh_due()`` is the model's own method,
-    computed from ``last_restocked``/``refresh_interval_hours`` — default
-    ``last_restocked=now`` keeps it not-due (matching the prior forced False)."""
+    """Real GuildShop row."""
     return GuildShop(
         id=item_id,
         guild_id=guild_id,
@@ -86,7 +83,6 @@ def _make_shop_item(
         quantity=quantity,
         price=price,
         last_restocked=last_restocked or datetime.now(UTC),
-        refresh_interval_hours=refresh_interval_hours,
     )
 
 
@@ -1067,11 +1063,9 @@ class TestCheckAndRefreshShop:
         service.refresh_shop.assert_awaited_once_with(mock_db, 999, "Bronze")
 
     @pytest.mark.asyncio
-    async def test_does_not_refresh_when_items_fresh(self, service, mock_db, mock_shop_repo):
-        """refresh_shop is NOT called when items are not due for refresh."""
-        # Fresh restock (now) + 12h interval → real is_refresh_due() is False.
-        items = [_make_shop_item(last_restocked=datetime.now(UTC), refresh_interval_hours=12)]
-        assert items[0].is_refresh_due() is False
+    async def test_does_not_refresh_when_shop_stocked(self, service, mock_db, mock_shop_repo):
+        """refresh_shop is NOT called when shop already has items (scheduler owns periodic refresh)."""
+        items = [_make_shop_item()]
         mock_shop_repo.get_shop_items.return_value = items
         service.refresh_shop = AsyncMock()
 
@@ -1080,17 +1074,15 @@ class TestCheckAndRefreshShop:
         service.refresh_shop.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_triggers_refresh_when_item_due(self, service, mock_db, mock_shop_repo):
-        """refresh_shop is called when at least one item is due for refresh."""
-        # Restocked well beyond the interval → real is_refresh_due() is True.
-        items = [_make_shop_item(last_restocked=datetime(2025, 1, 1, tzinfo=UTC), refresh_interval_hours=12)]
-        assert items[0].is_refresh_due() is True
+    async def test_does_not_refresh_stocked_shop_regardless_of_age(self, service, mock_db, mock_shop_repo):
+        """Stocked shop is never auto-refreshed on read, even if stock is old."""
+        items = [_make_shop_item(last_restocked=datetime(2025, 1, 1, tzinfo=UTC))]
         mock_shop_repo.get_shop_items.return_value = items
         service.refresh_shop = AsyncMock()
 
         await service._check_and_refresh_shop(mock_db, guild_id=999, tier="Silver")
 
-        service.refresh_shop.assert_awaited_once_with(mock_db, 999, "Silver")
+        service.refresh_shop.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reraises_exception(self, service, mock_db, mock_shop_repo):

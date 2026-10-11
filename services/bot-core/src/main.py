@@ -103,7 +103,7 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
     },
     {
         "job_id": "shop_refresh_default",
-        "cron": "0 */6 * * *",
+        "cron": "*/5 * * * *",  # every 5 min; executor skips guilds not yet due
         "payload": {"job_type": "shop_refresh"},
     },
     # temperature_decay_default REMOVED rev 0031 (temperature subsystem retired).
@@ -118,7 +118,7 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
     },
     {
         "job_id": "pg_backup_default",
-        "cron": "15 */3 * * *",  # :15 past every 3rd hour; offset from shop_refresh (:00)
+        "cron": "15 */3 * * *",  # :15 past every 3rd hour
         "payload": {"job_type": "pg_backup"},
     },
     {
@@ -145,7 +145,21 @@ def register_default_jobs(scheduler) -> None:
         scheduler: An ``AsyncIOScheduler`` (or compatible) instance that has
                    already been started.
     """
-    existing_job_ids = {j.id for j in scheduler.get_jobs()}
+    all_jobs = scheduler.get_jobs()
+    existing_job_ids = {j.id for j in all_jobs}
+
+    # Retire extra shop_refresh jobs (e.g. older per-guild ones): the due-aware
+    # shop_refresh_default runs every guild on its own schedule (#119).
+    for job in all_jobs:
+        job_payload = job.args[1] if len(job.args) > 1 else None
+        if (
+            job.id != "shop_refresh_default"
+            and isinstance(job_payload, dict)
+            and job_payload.get("job_type") == "shop_refresh"
+        ):
+            flogger.warning(f"Retiring extra shop_refresh job '{job.id}' — shop_refresh_default covers every guild")
+            scheduler.remove_job(job.id)
+            existing_job_ids.discard(job.id)
 
     for job_def in DEFAULT_SCHEDULER_JOBS:
         jid = job_def["job_id"]
@@ -458,7 +472,9 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.info("⏰ Initializing Scheduler…")
 
         # derive a sync URL and engine for APScheduler
-        sync_url = db_manager._connection_string.replace("postgresql+asyncpg", "postgresql")
+        from persist.database.migration_manager import _async_to_sync_url
+
+        sync_url = _async_to_sync_url(db_manager._connection_string)  # explicit psycopg2 driver (SQLAlchemy 2.1)
         sync_engine = create_engine(
             sync_url,
             echo=False,

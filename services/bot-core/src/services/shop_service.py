@@ -9,7 +9,7 @@ Handles business logic for multi-tier shop management including:
 """
 
 import random
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from persist.models.guild_shop import GuildShop
@@ -850,23 +850,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             raise
 
     async def _check_and_refresh_shop(self, db: AsyncSession, guild_id: int, tier: str) -> None:
-        """Check if shop needs refresh and refresh if necessary."""
+        """Seed shop on first visit; scheduled job owns periodic refresh."""
         try:
-            # Get shop items to check last refresh time
             items = await self.shop_repo.get_shop_items(db, guild_id, tier)
-
             if not items:
-                # No items means shop needs initial generation
                 await self.refresh_shop(db, guild_id, tier)
-                return
-
-            # Check if any items are due for refresh
-            needs_refresh = any(item.is_refresh_due() for item in items)
-
-            if needs_refresh:
-                await self.refresh_shop(db, guild_id, tier)
-                flogger.info(f"Auto-refreshed {tier} shop for guild {guild_id}")
-
         except Exception as e:
             flogger.error(f"Error checking shop refresh for guild {guild_id}, tier {tier}: {e}")
             raise
@@ -1151,3 +1139,16 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             flogger.error(f"Error adding item to shop: {e}")
             raise
+
+
+def shop_refresh_gap(config) -> timedelta:
+    """Return a randomised refresh gap timedelta for the given guild config.
+
+    Resolves shop_refresh_interval_hours and shop_refresh_jitter_pct from the
+    guild config, falling back to GameConstants defaults.  jitter=0 → exact
+    interval (no randomness).  Called by both the executor and the admin router.
+    """
+    interval = resolve_constant(config, "shop_refresh_interval_hours", GameConstants.SHOP_REFRESH_INTERVAL_HOURS)
+    jitter = resolve_constant(config, "shop_refresh_jitter_pct", GameConstants.SHOP_REFRESH_JITTER_PCT)
+    factor = 1 + random.uniform(-jitter, jitter) / 100
+    return timedelta(hours=interval * factor)

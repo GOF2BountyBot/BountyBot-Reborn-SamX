@@ -73,6 +73,7 @@ class RefreshShopRequest(BaseModel):
     guild_id: int = Field(ge=1)
     tier: str = Field(pattern="^(Bronze|Silver|Gold|Platinum)$")
     force_tech_level: int | None = Field(None, ge=1, le=10)
+    reset_schedule: bool = False
 
 
 class UpdateShopConfigRequest(BaseModel):

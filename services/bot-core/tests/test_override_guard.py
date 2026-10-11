@@ -169,6 +169,8 @@ ALLOWED_NON_OVERRIDE_COLUMNS: frozenset[str] = frozenset(
         "bounty_expiry_minutes",
         "bounty_spawn_interval_minutes",
         "next_spawn_check_at",
+        # ------- shop refresh schedule state (rev 0038) -------
+        "shop_next_refresh_at",  # rolling state updated by the executor; NOT a per-guild tunable
         # ------- combat engine columns (ketar pair deferred to A2; all others now in _OVERRIDE_FIELDS) -------
         # The ketar_i/ii columns exist in GuildConfig but are NOT yet in _OVERRIDE_FIELDS — deferred to unit A2.
         # All other Phase-1 combat engine constants moved to _OVERRIDE_FIELDS in rev 0032 (unit A1).

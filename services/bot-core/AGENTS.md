@@ -206,7 +206,7 @@ services/bot-core/
        utils/scheduler_holder (B.23a — executors schedule jobs directly, no HTTP hop)
    └── register_default_jobs() — idempotent, skips already-registered jobs:
        - bounty_spawn_default              (every BOUNTY_DELAY_RANDOM_MIN min, default 5; jitter 180 s)
-       - shop_refresh_default              (every 6 hours)
+       - shop_refresh_default              (5 min tick; per-guild interval configurable, default 6 h)
        - temperature_decay_default         (every 1 hour)
        - bounty_failsafe_cleanup_default   (every hour at :30)
        - pg_backup_default                 (every 3 hours at :15)
@@ -244,7 +244,7 @@ services/bot-core/
 | `players.py` | `/players` | players | POST / (create-or-get), GET /{id}, GET /guild/{id}, PUT /{id}/credits, PUT /{id}/xp, POST /{id}/prestige, GET /{id}/statistics, GET /{id}/promotion-status, GET /{id}/combat-preflight, PUT /{id}/promote, PUT /{id}/demote, GET /{id}/loadout, PUT /{guild_id}/{user_id}/cooldown/reset, POST /transfer |
 | `scheduler.py` | *(none)* | job-scheduler | GET /jobs, GET /jobs/{id}, POST /jobs (one-time), POST /jobs/recurring, PUT /jobs/{id}, DELETE /jobs/all, DELETE /jobs/guild/{id}, DELETE /jobs/{id}, POST /reset |
 | `ships.py` | `/ships` | ships | GET /player/{id}, GET /{ship_id}, POST / (grant), GET /player/{id}/active, PUT /{id}/set-active, PUT /{id}/loadout, PUT /{id}/nickname, POST /{id}/equip-check, POST /{id}/equip, POST /{id}/unequip, GET /{id}/loadout, DELETE /{id}, POST /transfer — player ship ownership (ship *definitions* live under /about) |
-| `shops.py` | `/shops` | shops | GET /guild/{id}/tier/{tier}, GET /guild/{id}/summary, POST /purchase, POST /purchase-ship, POST /sell, POST /sell-ship, POST /refresh, GET /guild/{id}/tier/{tier}/stats, GET …/tech-level/{tl}, GET /guild/{id}/refresh-status, GET /item/{shop_item_id}, PUT /guild/{id}/prices |
+| `shops.py` | `/shops` | shops | GET /guild/{id}/tier/{tier}, GET /guild/{id}/summary, POST /purchase, POST /purchase-ship, POST /sell, POST /sell-ship, POST /refresh, GET /guild/{id}/tier/{tier}/stats, GET …/tech-level/{tl}, GET /item/{shop_item_id}, PUT /guild/{id}/prices |
 | `systems.py` | `/systems` | systems | GET /route?start&end (A* pathfinding), GET /route/map (PNG, bounded LRU cache) |
 | `users.py` | `/users` | users | POST /, GET /{user_id}, PUT /{user_id}, GET /, POST /{user_id}/get-or-create |
 
@@ -333,7 +333,7 @@ Base (DeclarativeBase)
 | `primary_weapon_repository.py` | `PrimaryWeaponRepository` | PrimaryWeapon get_by_name + upsert |
 | `secondary_weapon_repository.py` | `SecondaryWeaponRepository` | SecondaryWeapon get_by_name + upsert |
 | `ship_repository.py` | `ShipRepository` | Ship upsert on top of GenericRepository |
-| `shop_repository.py` | `ShopRepository` | GuildShop CRUD + get_shop_items(_by_types), get_shop_item_by_name, update_quantity, clear_shop_tier, clear_all_guild_shops, get_guild_shops_summary, get_items_by_tech_level, update_prices, get_items_due_for_refresh, get_shop_statistics |
+| `shop_repository.py` | `ShopRepository` | GuildShop CRUD + get_shop_items(_by_types), get_shop_item_by_name, update_quantity, clear_shop_tier, clear_all_guild_shops, get_guild_shops_summary, get_items_by_tech_level, update_prices, get_shop_statistics |
 | `system_repository.py` | `SystemRepository` | System upsert on top of GenericRepository |
 | `turret_weapon_repository.py` | `TurretWeaponRepository` | TurretWeapon get_by_name + upsert |
 | `user_repository.py` | `UserRepository` | User CRUD + get_by_discord_id, get_by_ids, get_or_create_user |
@@ -536,7 +536,7 @@ Embed builders for bounty announcements/payouts and shop-refresh announcements P
 | `db_retention_executor.py` | `db_retention` | Daily at 03:45 UTC | Delete old rows: terminal bounties (24 h), terminal duels (24 h), audit logs (30 d), bounty combat logs (48 h), PvP duel combat logs (1 yr; 0=permanent) — windows from GameConstants |
 | `duel_expire_executor.py` | `duel_expire` | Via /jobs API (no default job) | Find pending duels past `expires_at`; mark as expired |
 | `pg_backup_executor.py` | `pg_backup` | Every 3 hours at :15 | zstd-compressed PostgreSQL dump to `BACKUP_DIR` (default `/app/data/backups`); retains `BACKUP_RETAIN_DAYS` (default 7) |
-| `shop_refresh_executor.py` | `shop_refresh` | Every 6 hours | Call ShopService.refresh_shop() for all guild configs |
+| `shop_refresh_executor.py` | `shop_refresh` | 5 min tick; per-guild interval (default 6 h) | Call ShopService.refresh_shop() for due guilds |
 | `temperature_decay_executor.py` | `temperature_decay` | Every 1 hour | Apply guild temperature decay via TemperatureService |
 
 > All executor functions use **deferred imports** (imports inside the function body) to avoid transitive ORM dependencies at module load time — important for clean test isolation.

@@ -33,7 +33,6 @@ def _guild_shop_to_response(item: object) -> "ShopItemResponse":
         quantity=get("quantity"),
         price=get("price"),
         last_restocked=last_restocked_str,
-        refresh_interval_hours=get("refresh_interval_hours"),
         # Enrichment fields not populated at refresh time — consistent with schema defaults
         emoji=get("emoji"),
         dps=get("dps"),
@@ -71,7 +70,6 @@ class ShopItemResponse(BaseModel):
     quantity: int
     price: int
     last_restocked: str
-    refresh_interval_hours: int
     emoji: str | None = None
     # Item stat fields (populated from the underlying item definition)
     dps: float | None = None  # weapons: DPS value

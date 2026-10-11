@@ -555,7 +555,8 @@
       "type_slug": "module_activations",
       "params": {
         "module": "cloak",
-        "min_fights": 5
+        "min_fights": 5,
+        "must_win": true
       },
       "duration_days": 7,
       "prizes": [
@@ -588,7 +589,8 @@
       "type_slug": "module_activations",
       "params": {
         "module": "booster",
-        "min_fights": 5
+        "min_fights": 5,
+        "must_win": true
       },
       "duration_days": 7,
       "prizes": [
@@ -621,7 +623,8 @@
       "type_slug": "module_activations",
       "params": {
         "module": "emergency_system",
-        "min_fights": 5
+        "min_fights": 5,
+        "must_win": true
       },
       "duration_days": 7,
       "prizes": [

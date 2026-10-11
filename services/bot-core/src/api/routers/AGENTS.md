@@ -42,7 +42,7 @@ This means:
 | `players.py` | `/players` | players | Player management: create-or-get, read, list by guild, credits, XP, prestige, statistics, promotion-status, combat-preflight, promote, demote, loadout, cooldown reset, transfer credits |
 | `scheduler.py` | *(none)* | job-scheduler | APScheduler management: list/get jobs, add one-time/recurring jobs, update, delete (single / all / by guild), `/reset` |
 | `ships.py` | `/ships` | ships | **Player ship** management (not ship definitions — those live under `/about`): list player ships, create (grant), active ship get/set, loadout get/update, nickname, equip-check/equip/unequip, delete, transfer |
-| `shops.py` | `/shops` | shops | Guild shop: items by tier, summary, purchase, purchase-ship, sell, sell-ship, refresh, stats, items by tech level, refresh-status, single item, prices |
+| `shops.py` | `/shops` | shops | Guild shop: items by tier, summary, purchase, purchase-ship, sell, sell-ship, refresh, stats, items by tech level, single item, prices |
 | `systems.py` | `/systems` | systems | Star system graph: GET `/route` (A* pathfinding), GET `/route/map` (PNG render, bounded LRU cache) |
 | `users.py` | `/users` | users | Discord user accounts: create, read, update, list, get-or-create |
 

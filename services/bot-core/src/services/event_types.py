@@ -410,6 +410,8 @@ def render_rules(
         text = text.replace(f"{{{key}}}", val)
 
     parts = [text]
+    if params.get("must_win"):
+        parts.append("Only fights you win count.")
     if min_fights > 1:
         activity_label = "checks" if et.category == "bounty" else "battles"
         parts.append(f"Prizes require at least {min_fights} {activity_label}.")

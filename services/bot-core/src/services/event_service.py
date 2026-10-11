@@ -36,6 +36,7 @@ async def record(
     *,
     context: str,
     stakes: int | None = None,
+    won: bool | None = None,
 ) -> None:
     """Upsert event metric rows for a player contribution (spec §3).
 
@@ -43,56 +44,66 @@ async def record(
     - Applies duel-stakes filter (context=="duel" && stakes < event_min_duel_stakes → skip).
     - Skips division-scoped events where player.tier != params["division"].
     - For each consumed metric does a native upsert (sum or max).
+    - When params["must_win"] is True and won is False, only the activity metric is recorded.
+      won=None (duel/bounty callers that don't pass it) disables the filter entirely.
     - Never raises — non-fatal, same rule as _increment_player_stats.
     - Flushes only; the caller owns the transaction.
     """
     try:
-        # Load guild config for stakes floor
-        config = await _config_repo.get_by_guild_id(session, player.guild_id)
-        min_stakes: int = config.event_min_duel_stakes if config else 1000
+        async with session.begin_nested():
+            # Load guild config for stakes floor
+            config = await _config_repo.get_by_guild_id(session, player.guild_id)
+            min_stakes: int = config.event_min_duel_stakes if config else 1000
 
-        # One query: all active events for this guild
-        result = await session.execute(
-            select(GameEvent).where(
-                GameEvent.guild_id == player.guild_id,
-                GameEvent.state == "active",
+            # One query: all active events for this guild
+            result = await session.execute(
+                select(GameEvent).where(
+                    GameEvent.guild_id == player.guild_id,
+                    GameEvent.state == "active",
+                )
             )
-        )
-        active_events = result.scalars().all()
+            active_events = result.scalars().all()
 
-        if not active_events:
-            return
+            if not active_events:
+                return
 
-        dialect = session.bind.dialect.name  # type: ignore[union-attr]
+            dialect = session.bind.dialect.name  # type: ignore[union-attr]
 
-        for event in active_events:
-            et = EVENT_TYPES.get(event.type_slug)
-            if et is None:
-                flogger.warning(f"Unknown event type slug={event.type_slug!r} event_id={event.id} — skipping")
-                continue
-
-            # Duel-stakes filter
-            if context == "duel" and (stakes is None or stakes < min_stakes):
-                continue
-
-            # Division gate
-            params = event.params or {}
-            if "division" in params and player.tier != params["division"]:
-                continue
-
-            # Expand parameterised metric keys
-            metric_modes = resolve_metrics(event.type_slug, params)
-
-            for metric_key, agg_mode in metric_modes.items():
-                contrib_value = contrib.get(metric_key, 0.0)
-                if contrib_value == 0.0 and agg_mode == "sum":
-                    # Nothing to add; still upsert for max so we create the row if absent
-                    # but for sum skip the round-trip entirely.
+            for event in active_events:
+                et = EVENT_TYPES.get(event.type_slug)
+                if et is None:
+                    flogger.warning(f"Unknown event type slug={event.type_slug!r} event_id={event.id} — skipping")
                     continue
 
-                await _upsert_metric(session, dialect, event.id, player.id, metric_key, contrib_value, agg_mode)
+                # Duel-stakes filter
+                if context == "duel" and (stakes is None or stakes < min_stakes):
+                    continue
 
-        await session.flush()
+                # Division gate
+                params = event.params or {}
+                if "division" in params and player.tier != params["division"]:
+                    continue
+
+                # must_win filter: lost/stalemate fight (won is False) only counts toward activity
+                if params.get("must_win") and won is False:
+                    activity_value = contrib.get(et.activity, 0.0)
+                    if activity_value > 0.0:
+                        await _upsert_metric(session, dialect, event.id, player.id, et.activity, activity_value, "sum")
+                    continue
+
+                # Expand parameterised metric keys
+                metric_modes = resolve_metrics(event.type_slug, params)
+
+                for metric_key, agg_mode in metric_modes.items():
+                    contrib_value = contrib.get(metric_key, 0.0)
+                    if contrib_value == 0.0 and agg_mode == "sum":
+                        # Nothing to add; still upsert for max so we create the row if absent
+                        # but for sum skip the round-trip entirely.
+                        continue
+
+                    await _upsert_metric(session, dialect, event.id, player.id, metric_key, contrib_value, agg_mode)
+
+            await session.flush()
 
     except Exception as exc:
         flogger.error(
@@ -275,7 +286,7 @@ async def live_standings(session: AsyncSession, event: GameEvent) -> list[dict]:
     out: list[dict] = []
     for pid, val, qual in raw:
         p = players_by_id.get(pid)
-        rk: int | None = (1 + sum(1 for v in qual_vals if v > val)) if qual else None
+        rk: int | None = (1 + sum(1 for v in qual_vals if v > val)) if (qual and val > 0) else None
         out.append(
             {
                 "player_id": pid,
@@ -301,7 +312,7 @@ async def final_standings(session: AsyncSession, event: GameEvent) -> list[dict]
     from sqlalchemy.orm import selectinload
 
     er_result = await session.execute(
-        select(EventResult).where(EventResult.event_id == event.id).order_by(EventResult.rank)
+        select(EventResult).where(EventResult.event_id == event.id).order_by(EventResult.rank.asc().nulls_last())
     )
     results = er_result.scalars().all()
     player_ids = [r.player_id for r in results]
@@ -624,11 +635,13 @@ async def end_event(
     if member_ids is not None:
         qual = [(pid, val) for pid, val in qual if players_by_id.get(pid) and players_by_id[pid].user_id in member_ids]
 
-    # Competition rank: 1 + count of players with strictly greater value
-    def _rank(player_val: float) -> int:
+    # Competition rank: 1 + count of players with strictly greater value; None for 0-scorers.
+    def _rank(player_val: float) -> int | None:
+        if player_val <= 0:
+            return None
         return 1 + sum(1 for _, v in qual if v > player_val)
 
-    ranked: list[tuple[int, float, int]] = [(pid, val, _rank(val)) for pid, val in qual]
+    ranked: list[tuple[int, float, int | None]] = [(pid, val, _rank(val)) for pid, val in qual]
 
     # Load prize slots
     prize_result = await session.execute(select(GameEventPrize).where(GameEventPrize.event_id == event.id))
@@ -647,7 +660,9 @@ async def end_event(
             slot_players = ranked
         else:
             rank_to = slot.rank_to if slot.rank_to is not None else slot.rank_from
-            slot_players = [(pid, val, rk) for pid, val, rk in ranked if slot.rank_from <= rk <= rank_to]
+            slot_players = [
+                (pid, val, rk) for pid, val, rk in ranked if rk is not None and slot.rank_from <= rk <= rank_to
+            ]
 
         for pid, _val, rk in slot_players:
             player = players_by_id.get(pid)
@@ -726,7 +741,7 @@ async def end_event(
     winner_summary = {
         str(pid): {"rank": rk, "value": val, "prize": "; ".join(prize_parts.get(pid, []))}
         for pid, val, rk in ranked
-        if rk <= 3
+        if rk is not None and rk <= 3
     }
     failures = [
         f"player_id={pid}: partial mint failure (slot details in ERROR log)"
@@ -756,10 +771,11 @@ async def end_event(
         val_str = et.fmt(val) if et else str(val)
         pz = "; ".join(prize_parts.get(pid, []))
         suffix = f" · {pz}" if pz else ""
-        standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}{suffix}")
+        rank_str = _ordinal(rk) if rk is not None else "—"
+        standing_lines.append(f"{rank_str}: **{name}** — {val_str}{suffix}")
     # @mention the top-3 placed winners — but only those who still want event pings (opt-out is honoured;
     # opted-out winners are still listed by name in the embed above).
-    top_mention_pids = {pid for pid, _, rk in ranked if rk <= 3}
+    top_mention_pids = {pid for pid, _, rk in ranked if rk is not None and rk <= 3}
     mention_str = " ".join(
         f"<@{players_by_id[pid].user_id}>"
         for pid in sorted(top_mention_pids)

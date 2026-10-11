@@ -312,36 +312,6 @@ async def test_update_prices_invalid_multiplier(db_session: AsyncSession, repo: 
         await repo.update_prices(db_session, 14000, -1.0)
 
 
-# -- get_items_due_for_refresh -------------------------------------------------
-
-
-async def test_get_items_due_for_refresh(db_session: AsyncSession, repo: ShopRepository):
-    """Items with very short intervals should be due for refresh immediately.
-
-    Skipped: SQLite stores naive datetimes but is_refresh_due() compares with
-    datetime.now(UTC) which is timezone-aware, causing a TypeError.
-    """
-    pytest.skip("PostgreSQL-specific: SQLite naive vs tz-aware datetime mismatch in is_refresh_due()")
-    await _create_guild_config(db_session, 15000)
-    # refresh_interval_hours=0 means always due
-    item = GuildShop(
-        guild_id=15000,
-        tier="Bronze",
-        tech_level=1,
-        item_type="weapon",
-        item_name="RefreshMe",
-        quantity=1,
-        price=100,
-        refresh_interval_hours=0,
-    )
-    await repo.add(db_session, item)
-
-    due = await repo.get_items_due_for_refresh(db_session, 15000)
-
-    assert len(due) >= 1
-    assert any(i.item_name == "RefreshMe" for i in due)
-
-
 # -- get_shop_statistics -------------------------------------------------------
 
 

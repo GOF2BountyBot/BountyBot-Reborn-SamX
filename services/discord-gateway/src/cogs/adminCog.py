@@ -235,7 +235,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         # Powers setting autocomplete (97 fields: 95 game-constant + starting_credits +
         # sale_price_factor), help text, and local bounds pre-check before any API call.
         # NOTE: starting_credits and sale_price_factor are metadata-only additions and
-        # do NOT appear in _GAME_CONSTANT_FIELDS (the static fallback list, 110 fields).
+        # do NOT appear in _GAME_CONSTANT_FIELDS (the static fallback list, 112 fields).
         # Falls back to _GAME_CONSTANT_FIELDS when the metadata endpoint is unavailable.
         self._config_metadata: list[dict] = []
         self._config_metadata_by_field: dict[str, dict] = {}
@@ -421,7 +421,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         else:
             flogger.error(
                 "_preload_static_catalogs: terminal failure for config metadata after 5 attempts; "
-                "setting autocomplete will fall back to _GAME_CONSTANT_FIELDS (110 fields)"
+                "setting autocomplete will fall back to _GAME_CONSTANT_FIELDS (112 fields)"
             )
 
     async def _fetch_admin_pending_duels(self, guild_id: int) -> list[dict]:
@@ -889,8 +889,14 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
             tiers_to_refresh = [tier] if tier is not None else list(self._valid_tiers)
             refreshed = []
-            for t in tiers_to_refresh:
-                refresh_data = {"guild_id": interaction.guild_id, "tier": t, "force_tech_level": force_tech_level}
+            for i, t in enumerate(tiers_to_refresh):
+                refresh_data = {
+                    "guild_id": interaction.guild_id,
+                    "tier": t,
+                    "force_tech_level": force_tech_level,
+                    # Full restock (no tier) restarts the guild's schedule once, after the last tier.
+                    "reset_schedule": tier is None and i == len(tiers_to_refresh) - 1,
+                }
                 resp = await self.http_client.post(
                     f"{api_base}/admin/shops/refresh",
                     json=refresh_data,
@@ -969,7 +975,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         sale_price_factor), uses the live list with deprecated fields sorted last and
         a "(deprecated)" suffix in the choice *name* (value stays the bare field name).
 
-        Falls back to _GAME_CONSTANT_FIELDS (110 fields — excludes starting_credits /
+        Falls back to _GAME_CONSTANT_FIELDS (112 fields — excludes starting_credits /
         sale_price_factor which are metadata-only) when the metadata endpoint is offline.
         """
         current_lower = current.lower()
@@ -987,7 +993,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 if len(choices) == 25:
                     break
             return choices
-        # Fallback to static list (no metadata — 110 fields, no starting_credits/sale_price_factor)
+        # Fallback to static list (no metadata — 112 fields, no starting_credits/sale_price_factor)
         return [app_commands.Choice(name=f, value=f) for f in self._GAME_CONSTANT_FIELDS if current_lower in f.lower()][
             :25
         ]
@@ -3054,14 +3060,14 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
-    # _GAME_CONSTANT_FIELDS — static fallback list (110 fields, rev 0032)
+    # _GAME_CONSTANT_FIELDS — static fallback list (112 fields, rev 0038)
     # Used by setting_autocomplete when the /config/metadata endpoint is offline.
     # NOTE: starting_credits and sale_price_factor are NOT in this list — they are
     # Tier-1 scalars served only via the metadata endpoint (metadata-only additions).
     # ------------------------------------------------------------------
 
     # All slash-settable per-guild game-constant override field names (identical to _OVERRIDE_FIELDS in
-    # bot-core config router). 110 fields as of rev 0033 (117 from rev 0032 minus 7 JSONB dict fields).
+    # bot-core config router). 112 fields as of rev 0038 (110 at rev 0033 + 2 shop refresh schedule fields).
     # Rev 0031 retired 14 fields. Rev 0033 retired 7 JSONB dict fields (backfilled to flat scalars in 0030).
     _GAME_CONSTANT_FIELDS: tuple[str, ...] = (
         # division_max_tl — RETIRED rev 0033 (JSONB dropped)
@@ -3125,6 +3131,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "recently_spotted_max_window",
         "demotion_credit_penalty_pct",
         "shop_combat_module_prob",
+        # Shop refresh schedule per-guild overrides (rev 0038)
+        "shop_refresh_interval_hours",
+        "shop_refresh_jitter_pct",
         # D-trivial + DIVISION_TL_CENTERS scalar overrides (revision 0028)
         # Criminal loadout — secondary selection
         "criminal_secondary_min_damage",
@@ -3220,7 +3229,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "shock_blast_trigger_range_m",
         # Shield / armour regen reemission (CI-21)
         "combat_layer_reemit_fraction",
-        # _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS (config.py): 110 fields as of rev 0033 (dropped 7 JSONB dicts).
+        # _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS (config.py): 112 fields as of rev 0038.
     )
 
     # ------------------------------------------------------------------

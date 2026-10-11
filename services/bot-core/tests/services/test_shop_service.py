@@ -8,7 +8,7 @@ module is imported (see conftest.py at the tests/ root).
 import sys
 import types
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -39,7 +39,7 @@ from persist.models.player_ship import PlayerShip
 from persist.models.ship import Ship
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
-from services.shop_service import ShopService
+from services.shop_service import ShopService, shop_refresh_gap
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,11 +71,8 @@ def _make_shop_item(
     price: int = 200,
     last_restocked: datetime | None = None,
     tech_level: int = 1,
-    refresh_interval_hours: int = 12,
 ) -> GuildShop:
-    """Real GuildShop row. ``is_refresh_due()`` is the model's own method,
-    computed from ``last_restocked``/``refresh_interval_hours`` — default
-    ``last_restocked=now`` keeps it not-due (matching the prior forced False)."""
+    """Real GuildShop row."""
     return GuildShop(
         id=item_id,
         guild_id=guild_id,
@@ -86,7 +83,6 @@ def _make_shop_item(
         quantity=quantity,
         price=price,
         last_restocked=last_restocked or datetime.now(UTC),
-        refresh_interval_hours=refresh_interval_hours,
     )
 
 
@@ -1067,11 +1063,9 @@ class TestCheckAndRefreshShop:
         service.refresh_shop.assert_awaited_once_with(mock_db, 999, "Bronze")
 
     @pytest.mark.asyncio
-    async def test_does_not_refresh_when_items_fresh(self, service, mock_db, mock_shop_repo):
-        """refresh_shop is NOT called when items are not due for refresh."""
-        # Fresh restock (now) + 12h interval → real is_refresh_due() is False.
-        items = [_make_shop_item(last_restocked=datetime.now(UTC), refresh_interval_hours=12)]
-        assert items[0].is_refresh_due() is False
+    async def test_does_not_refresh_when_shop_stocked(self, service, mock_db, mock_shop_repo):
+        """refresh_shop is NOT called when shop already has items (scheduler owns periodic refresh)."""
+        items = [_make_shop_item()]
         mock_shop_repo.get_shop_items.return_value = items
         service.refresh_shop = AsyncMock()
 
@@ -1080,17 +1074,15 @@ class TestCheckAndRefreshShop:
         service.refresh_shop.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_triggers_refresh_when_item_due(self, service, mock_db, mock_shop_repo):
-        """refresh_shop is called when at least one item is due for refresh."""
-        # Restocked well beyond the interval → real is_refresh_due() is True.
-        items = [_make_shop_item(last_restocked=datetime(2025, 1, 1, tzinfo=UTC), refresh_interval_hours=12)]
-        assert items[0].is_refresh_due() is True
+    async def test_does_not_refresh_stocked_shop_regardless_of_age(self, service, mock_db, mock_shop_repo):
+        """Stocked shop is never auto-refreshed on read, even if stock is old."""
+        items = [_make_shop_item(last_restocked=datetime(2025, 1, 1, tzinfo=UTC))]
         mock_shop_repo.get_shop_items.return_value = items
         service.refresh_shop = AsyncMock()
 
         await service._check_and_refresh_shop(mock_db, guild_id=999, tier="Silver")
 
-        service.refresh_shop.assert_awaited_once_with(mock_db, 999, "Silver")
+        service.refresh_shop.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reraises_exception(self, service, mock_db, mock_shop_repo):
@@ -3158,3 +3150,23 @@ class TestGetItemTechLevelColdCachePath:
 
         # Must return 0, not fall through to 1
         assert tl == 0
+
+
+class TestShopRefreshGap:
+    """shop_refresh_gap: interval × (1 ± jitter%), per-guild overrides with GameConstants fallback (#119)."""
+
+    def test_unset_overrides_use_game_constant_defaults(self):
+        gap = shop_refresh_gap(GuildConfig(guild_id=1))
+        assert GameConstants.SHOP_REFRESH_JITTER_PCT == 0
+        assert gap == timedelta(hours=GameConstants.SHOP_REFRESH_INTERVAL_HOURS)
+
+    def test_zero_jitter_is_exact(self):
+        assert shop_refresh_gap(GuildConfig(guild_id=1, shop_refresh_interval_hours=4, shop_refresh_jitter_pct=0)) == (
+            timedelta(hours=4)
+        )
+
+    def test_max_jitter_stays_within_half_to_one_and_a_half_and_varies(self):
+        config = GuildConfig(guild_id=1, shop_refresh_interval_hours=6, shop_refresh_jitter_pct=50)
+        gaps = {shop_refresh_gap(config) for _ in range(200)}
+        assert all(timedelta(hours=3) <= g <= timedelta(hours=9) for g in gaps)
+        assert len(gaps) > 1

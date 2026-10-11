@@ -193,7 +193,7 @@ No credits move on expiry — pending stakes are an implicit reservation, not a 
 ### shop_refresh_executor.py
 
 **Function**: `execute_shop_refresh_job(job_id, payload)`  
-**Triggered by**: `shop_refresh_default` (cron `0 */6 * * *` — every 6 hours)  
+**Triggered by**: `shop_refresh_default` (cron `*/5 * * * *` — every 5 min tick; executor skips guilds not yet due; per-guild interval defaults to 6 h)  
 **Payload fields**: optional `guild_id`, `tier`, `force_tech_level`
 
 **Flow**:
@@ -299,7 +299,7 @@ writes still go through `AuditService.log_action`.
 ### pg_backup_executor.py
 
 **Function**: `execute_pg_backup_job(job_id, payload)`  
-**Triggered by**: `pg_backup_default` (cron `15 */3 * * *` — :15 past every 3rd hour, offset from shop_refresh at :00 and failsafe cleanup at :30)  
+**Triggered by**: `pg_backup_default` (cron `15 */3 * * *` — :15 past every 3rd hour)  
 **Payload fields**: none required
 
 **Purpose**: `pg_dump | zstd -10` of the game database to a date-partitioned

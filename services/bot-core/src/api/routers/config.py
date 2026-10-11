@@ -109,6 +109,9 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "loot_commodity_sell_fraction",
     # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
     "shop_combat_module_prob",
+    # Shop refresh schedule per-guild overrides (rev 0038)
+    "shop_refresh_interval_hours",
+    "shop_refresh_jitter_pct",
     # D-trivial + DIVISION_TL_CENTERS scalar overrides (issue #70, revision 0028)
     # Criminal loadout — secondary selection
     "criminal_secondary_min_damage",
@@ -204,7 +207,7 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "shock_blast_trigger_range_m",
     # Shield / armour regen reemission (CI-21)
     "combat_layer_reemit_fraction",
-    # _OVERRIDE_FIELDS == _GAME_CONSTANT_FIELDS (adminCog): 110 fields as of rev 0033 (dropped 7 JSONB dicts).
+    # _OVERRIDE_FIELDS == _GAME_CONSTANT_FIELDS (adminCog): 112 fields as of rev 0038.
 )
 
 

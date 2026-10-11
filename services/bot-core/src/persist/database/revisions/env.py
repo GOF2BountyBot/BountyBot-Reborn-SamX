@@ -47,7 +47,8 @@ def get_sync_url() -> str:
     db = os.getenv("POSTGRES_DB", "bountydb")
     user = os.getenv("POSTGRES_USER", "bounty")
     pw = os.getenv("POSTGRES_PASSWORD", "bounty")
-    return f"postgresql://{user}:{pw}@{host}:{port}/{db}"
+    # Explicit driver: SQLAlchemy 2.1 made bare postgresql:// mean psycopg (v3), which is not installed.
+    return f"postgresql+psycopg2://{user}:{pw}@{host}:{port}/{db}"
 
 
 def run_migrations_offline() -> None:

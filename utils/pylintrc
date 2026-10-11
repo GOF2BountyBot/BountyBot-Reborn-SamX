@@ -154,6 +154,8 @@ max-line-length=120
 max-args=8
 max-attributes=12
 max-locals=20
+# SQLAlchemy 2.1 adds a declarative base class: joined-table models (Item -> Weapon -> *Weapon) sit at 8.
+max-parents=8
 
 [SIMILARITIES]
 min-similarity-lines=6

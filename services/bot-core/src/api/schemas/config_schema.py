@@ -131,6 +131,10 @@ class GameConstantsOverridesMixin(BaseModel):
     # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
     shop_combat_module_prob: float | None = Field(None, ge=0.0, le=1.0)
 
+    # Shop refresh schedule per-guild overrides (rev 0038)
+    shop_refresh_interval_hours: int | None = Field(None, ge=1, le=24)
+    shop_refresh_jitter_pct: int | None = Field(None, ge=0, le=50)
+
     # ------------------------------------------------------------------
     # D-trivial + DIVISION_TL_CENTERS scalar overrides (issue #70, revision 0028)
     # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.

@@ -311,9 +311,9 @@ class TestDefaultSchedulerJobsConstant:
         assert job["cron"] == expected
 
     def test_shop_refresh_cron(self):
-        """shop_refresh_default cron is '0 */6 * * *' (every 6 hours)."""
+        """shop_refresh_default cron is '*/5 * * * *' (every 5 min tick; due-aware executor)."""
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "shop_refresh_default")
-        assert job["cron"] == "0 */6 * * *"
+        assert job["cron"] == "*/5 * * * *"
 
     def test_bounty_spawn_has_jitter_key(self):
         """bounty_spawn_default job definition includes a 'jitter' key."""
@@ -494,13 +494,13 @@ class TestRegisterDefaultJobs:
         assert trigger._expr == expected_cron
 
     def test_shop_refresh_trigger_uses_correct_cron(self):
-        """shop_refresh_default trigger encodes the every-6-hours cron expression."""
+        """shop_refresh_default trigger encodes the every-5-min cron expression."""
         scheduler = _make_mock_scheduler()
         register_default_jobs(scheduler)
 
         calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         trigger = calls_by_id["shop_refresh_default"].kwargs["trigger"]
-        assert trigger._expr == "0 */6 * * *"
+        assert trigger._expr == "*/5 * * * *"
 
     # test_temperature_decay_trigger_uses_correct_cron — RETIRED rev 0031
 
@@ -547,3 +547,30 @@ class TestRegisterDefaultJobs:
             assert call.args[0] is _MOCK_RUN_JOB, (
                 f"Expected run_job callable but got {call.args[0]} for job '{call.kwargs.get('id')}'"
             )
+
+    # ------------------------------------------------------------------
+    # Stray shop_refresh job retirement
+    # ------------------------------------------------------------------
+
+    def test_only_stray_shop_refresh_jobs_are_retired(self):
+        """Extra shop_refresh jobs are removed; shop_refresh_default and other job types are kept (#119)."""
+
+        def _job(jid, payload):
+            j = MagicMock()
+            j.id = jid
+            j.args = [jid, payload]
+            return j
+
+        sched = _make_mock_scheduler()
+        sched.get_jobs = MagicMock(
+            return_value=[
+                _job("shop_refresh_default", {"job_type": "shop_refresh"}),
+                _job("shop_refresh_guild_123", {"job_type": "shop_refresh", "guild_id": 123}),
+                _job("bounty_spawn_custom", {"job_type": "bounty_spawn"}),
+            ]
+        )
+
+        register_default_jobs(sched)
+
+        sched.remove_job.assert_called_once_with("shop_refresh_guild_123")
+        assert "shop_refresh_default" not in {c.kwargs.get("id") for c in sched.add_job.call_args_list}

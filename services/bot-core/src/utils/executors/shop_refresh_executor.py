@@ -22,7 +22,7 @@ live database or all ORM dependencies to be present.
 """
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 import httpx
@@ -49,7 +49,9 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
     Payload fields
     --------------
     guild_id : int, optional
-        The guild to refresh.  When omitted all guilds are refreshed.
+        The guild to refresh.  When omitted, every guild whose shop schedule is
+        due (``guild_configs.shop_next_refresh_at``) is refreshed and its next
+        refresh time rolled forward; guilds not yet due are skipped.
     tier : str, optional
         Division tier (Bronze / Silver / Gold).  When omitted all three
         tiers are refreshed for the given guild.
@@ -68,13 +70,17 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
     multi-worker is ever reintroduced, re-entrant invocations (from
     cadence overlap or a post-restart scheduler re-fire) would refresh
     shop stock twice in the same tick — visible to players and wasteful.
-    A leader-election mechanism or a per-guild "last refreshed at" check
-    would be required before running at workers > 1.
+    The bulk path's due check stops sequential re-fires (the first run rolls
+    ``shop_next_refresh_at`` forward) but not two runs racing at once.
     """
     # Deferred imports to avoid transitive ORM dependencies at module load time.
     from persist.database.manager import db_manager
+    from persist.models.guild_config import GuildConfig
+    from persist.models.guild_shop import GuildShop
     from persist.repositories.config_repository import ConfigRepository
-    from services.shop_service import ShopService
+    from services.game_constants import GameConstants, resolve_constant
+    from services.shop_service import ShopService, shop_refresh_gap
+    from sqlalchemy import func, select, update
 
     start_ts = datetime.now(UTC)
     flogger.info(f"ShopRefreshJob[{job_id}] START")
@@ -111,88 +117,104 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                     "results": results,
                 }
 
-            # ── Bulk refresh: all guilds, all tiers ────────────────────────
-            flogger.info(f"ShopRefreshJob[{job_id}] bulk refresh started")
-            config_repo = ConfigRepository()
-            guild_configs = await config_repo.list_all(db)
+            # ── Bulk refresh: every guild whose schedule is due, all tiers ──
+            guild_configs = await ConfigRepository().list_all(db)
+            rows = await db.execute(
+                select(GuildShop.guild_id, func.max(GuildShop.last_restocked)).group_by(GuildShop.guild_id)
+            )
+            last_restocked = dict(rows.all())
 
-            if not guild_configs:
-                flogger.info(f"ShopRefreshJob[{job_id}] no guilds configured, nothing to do")
-                return {"status": "success", "guilds_refreshed": 0, "results": {}}
+        # Configs are detached from here on; expire_on_commit=False keeps their loaded attributes readable.
+        now = datetime.now(UTC)
+        due: list = []
+        for config in guild_configs:
+            due_at = config.shop_next_refresh_at
+            if due_at is None:
+                # Never scheduled (first cycle after rev 0038): last restock + interval; no shops yet → due now.
+                last = last_restocked.get(config.guild_id)
+                interval = resolve_constant(
+                    config, "shop_refresh_interval_hours", GameConstants.SHOP_REFRESH_INTERVAL_HOURS
+                )
+                due_at = last + timedelta(hours=interval) if last else now
+            if due_at <= now:
+                due.append((config, due_at))
+            else:
+                flogger.debug(f"ShopRefreshJob[{job_id}] guild {config.guild_id} not due until {due_at.isoformat()}")
 
-            # Pre-load all static game data once to avoid repeated DB
-            # queries per guild x tier.  At 1000 guilds this reduces
-            # ~420K item queries down to 4 (one per item type).
+        skipped = len(guild_configs) - len(due)
+        if not due:
+            flogger.debug(f"ShopRefreshJob[{job_id}] no guild due ({skipped} checked)")
+            return {"status": "success", "guilds_refreshed": 0, "guilds_skipped": skipped, "results": {}}
+
+        # Pre-load all static game data once to avoid repeated DB queries per
+        # guild x tier (at 1000 guilds ~420K item queries down to 4).  Own session,
+        # so a failing guild's rollback can't expire the cached rows.
+        async with db_manager.get_session() as db:
             await shop_service.preload_static_data(db)
 
-            bulk_results: dict = {}
-            try:
-                for config in guild_configs:
-                    gid = config.guild_id
-
-                    # ── Resolve channel + role once per guild, before tier loop ──
-                    shop_channel_id = getattr(config, "shop_channel_id", None)
-                    # Prefer shop_announcements_role_id over bounty_hunter_role_id.
-                    # Only use it when it's a real integer ID (guards against MagicMock attrs in tests).
-                    _shop_ann_id = getattr(config, "shop_announcements_role_id", None)
-                    _bh_role_id = getattr(config, "bounty_hunter_role_id", None)
-                    mention_role_id = _shop_ann_id if isinstance(_shop_ann_id, int) else _bh_role_id
-
-                    tier_results: dict = {}
-                    for i, t in enumerate(_SHOP_TIERS):
-                        tier_results[t] = await shop_service.refresh_shop(db, gid, t, force_tech_level)
-
-                        # Diagnostic: log item count immediately after refresh
-                        items = tier_results[t].get("items") or []
-                        flogger.info(
-                            "ShopRefresh: guild=%s tier=%s — refreshed %d items",
-                            gid,
-                            t,
-                            len(items),
+        bulk_results: dict = {}
+        try:
+            for config, due_at in due:
+                gid = config.guild_id
+                try:
+                    async with db_manager.get_session() as db:
+                        tier_results = {
+                            t: await shop_service.refresh_shop(db, gid, t, force_tech_level) for t in _SHOP_TIERS
+                        }
+                        # Roll from the previous due time (no drift); after missed cycles restart from now.
+                        gap = shop_refresh_gap(config)
+                        next_at = due_at + gap
+                        if next_at <= now:
+                            next_at = now + gap
+                        await db.execute(
+                            update(GuildConfig).where(GuildConfig.guild_id == gid).values(shop_next_refresh_at=next_at)
                         )
+                        await db.commit()
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    # One broken guild must not starve the rest; it stays due and retries next tick.
+                    flogger.error(f"ShopRefreshJob[{job_id}] guild {gid} refresh failed: {e}")
+                    continue
+                flogger.info(f"ShopRefreshJob[{job_id}] guild {gid} refreshed, next refresh {next_at.isoformat()}")
+                bulk_results[gid] = tier_results
 
-                        # ── Announce per tier ──────────────────────────────
-                        # Role mention only on the first tier (Bronze) to avoid
-                        # 4 pings per refresh cycle.
-                        role_for_this_tier = mention_role_id if i == 0 else None
-                        # Diagnostic: log announce item count (must equal refresh count)
-                        announce_items = items
-                        flogger.info(
-                            "ShopRefresh: announcing %d items for guild=%s tier=%s",
-                            len(announce_items),
-                            gid,
-                            t,
-                        )
-                        # ── Push to gateway autocomplete cache (Phase 5b) ──
-                        # Push BEFORE announce so the cache is populated when
-                        # users react to the Discord notification (B-P1).
-                        await _push_shop_cache(job_id, gid, t, items)
+                # ── Push + announce, only after the guild's refresh committed ──
+                shop_channel_id = getattr(config, "shop_channel_id", None)
+                # Prefer shop_announcements_role_id over bounty_hunter_role_id.
+                # Only use it when it's a real integer ID (guards against MagicMock attrs in tests).
+                _shop_ann_id = getattr(config, "shop_announcements_role_id", None)
+                _bh_role_id = getattr(config, "bounty_hunter_role_id", None)
+                mention_role_id = _shop_ann_id if isinstance(_shop_ann_id, int) else _bh_role_id
+                for i, t in enumerate(_SHOP_TIERS):
+                    items = tier_results[t].get("items") or []
+                    flogger.info("ShopRefresh: guild=%s tier=%s — refreshed %d items", gid, t, len(items))
+                    flogger.info("ShopRefresh: announcing %d items for guild=%s tier=%s", len(items), gid, t)
+                    # Push BEFORE announce so the cache is populated when users
+                    # react to the Discord notification (B-P1).
+                    await _push_shop_cache(job_id, gid, t, items)
+                    # Role mention only on the first tier (Bronze) to avoid 4 pings per refresh cycle.
+                    await _announce_shop_refresh(
+                        job_id,
+                        gid,
+                        shop_channel_id,
+                        mention_role_id if i == 0 else None,
+                        tier=t,
+                        items=items,
+                        tech_level=tier_results[t].get("tech_level"),
+                    )
+        finally:
+            shop_service.clear_static_cache()
 
-                        await _announce_shop_refresh(
-                            job_id,
-                            gid,
-                            shop_channel_id,
-                            role_for_this_tier,
-                            tier=t,
-                            items=announce_items,
-                            tech_level=tier_results[t].get("tech_level"),
-                        )
-
-                    bulk_results[gid] = tier_results
-
-            finally:
-                shop_service.clear_static_cache()
-
-            end_ts = datetime.now(UTC)
-            duration = (end_ts - start_ts).total_seconds()
-            flogger.info(
-                f"ShopRefreshJob[{job_id}] bulk refresh completed: {len(bulk_results)} guilds in {duration:.2f}s"
-            )
-            return {
-                "status": "success",
-                "guilds_refreshed": len(bulk_results),
-                "results": bulk_results,
-            }
+        duration = (datetime.now(UTC) - start_ts).total_seconds()
+        flogger.info(
+            f"ShopRefreshJob[{job_id}] bulk refresh completed: {len(bulk_results)} guilds refreshed,"
+            f" {skipped} not due, in {duration:.2f}s"
+        )
+        return {
+            "status": "success",
+            "guilds_refreshed": len(bulk_results),
+            "guilds_skipped": skipped,
+            "results": bulk_results,
+        }
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"ShopRefreshJob[{job_id}] failed: {e}")

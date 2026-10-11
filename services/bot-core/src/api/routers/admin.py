@@ -11,6 +11,7 @@ Handles administrative operations including:
 
 import json
 import os
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from persist.database.manager import get_db_session
@@ -22,7 +23,7 @@ from services.bounty_service import BountyService
 from services.config_service import ConfigService
 from services.inventory_service import InventoryService
 from services.player_service import PlayerService
-from services.shop_service import ShopService
+from services.shop_service import ShopService, shop_refresh_gap
 from shared import bblogger
 
 from api.schemas.admin_schema import (
@@ -736,6 +737,7 @@ async def refresh_shop(
             # The lookup is best-effort: if it fails (e.g. in tests with simple
             # AsyncMock sessions) we proceed without a channel ID and skip the
             # announcement rather than failing the refresh.
+            config = None
             try:
                 from persist.repositories.config_repository import ConfigRepository
 
@@ -753,6 +755,17 @@ async def refresh_shop(
                     f"announcement will be skipped: {cfg_exc}"
                 )
 
+            # Full manual restock (gateway sends reset_schedule on the last tier): restart the
+            # guild's schedule from now so the scheduled job doesn't restock again right after.
+            next_refresh_at = None
+            if request.reset_schedule and config is not None:
+                next_refresh_at = datetime.now(UTC) + shop_refresh_gap(config)
+                config.shop_next_refresh_at = next_refresh_at
+                flogger.info(
+                    f"Admin shop refresh: reset schedule for guild={request.guild_id},"
+                    f" next={next_refresh_at.isoformat()}"
+                )
+
             await AuditService.log_action(
                 db,
                 user_id=user_id,
@@ -760,7 +773,11 @@ async def refresh_shop(
                 guild_id=request.guild_id,
                 resource_type="shop",
                 resource_id=str(request.guild_id),
-                details={"tier": request.tier},
+                details={
+                    "tier": request.tier,
+                    "reset_schedule": request.reset_schedule,
+                    "next_refresh_at": next_refresh_at.isoformat() if next_refresh_at else None,
+                },
             )
 
         # Announce AFTER the DB session is closed so the commit is visible to readers.

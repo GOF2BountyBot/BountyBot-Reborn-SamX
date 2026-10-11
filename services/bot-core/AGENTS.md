@@ -206,7 +206,7 @@ services/bot-core/
        utils/scheduler_holder (B.23a — executors schedule jobs directly, no HTTP hop)
    └── register_default_jobs() — idempotent, skips already-registered jobs:
        - bounty_spawn_default              (every BOUNTY_DELAY_RANDOM_MIN min, default 5; jitter 180 s)
-       - shop_refresh_default              (every 6 hours)
+       - shop_refresh_default              (5 min tick; per-guild interval configurable, default 6 h)
        - temperature_decay_default         (every 1 hour)
        - bounty_failsafe_cleanup_default   (every hour at :30)
        - pg_backup_default                 (every 3 hours at :15)
@@ -536,7 +536,7 @@ Embed builders for bounty announcements/payouts and shop-refresh announcements P
 | `db_retention_executor.py` | `db_retention` | Daily at 03:45 UTC | Delete old rows: terminal bounties (24 h), terminal duels (24 h), audit logs (30 d), bounty combat logs (48 h), PvP duel combat logs (1 yr; 0=permanent) — windows from GameConstants |
 | `duel_expire_executor.py` | `duel_expire` | Via /jobs API (no default job) | Find pending duels past `expires_at`; mark as expired |
 | `pg_backup_executor.py` | `pg_backup` | Every 3 hours at :15 | zstd-compressed PostgreSQL dump to `BACKUP_DIR` (default `/app/data/backups`); retains `BACKUP_RETAIN_DAYS` (default 7) |
-| `shop_refresh_executor.py` | `shop_refresh` | Every 6 hours | Call ShopService.refresh_shop() for all guild configs |
+| `shop_refresh_executor.py` | `shop_refresh` | 5 min tick; per-guild interval (default 6 h) | Call ShopService.refresh_shop() for due guilds |
 | `temperature_decay_executor.py` | `temperature_decay` | Every 1 hour | Apply guild temperature decay via TemperatureService |
 
 > All executor functions use **deferred imports** (imports inside the function body) to avoid transitive ORM dependencies at module load time — important for clean test isolation.

@@ -302,7 +302,7 @@ APScheduler runs in-process within bot-core. Jobs and their default schedules:
 | Job | Executor | Default Schedule |
 |-----|----------|-----------------|
 | `bounty_spawn_default` | bounty_spawn_executor | Every N minutes (env-configurable) |
-| `shop_refresh_default` | shop_refresh_executor | Every 6 hours |
+| `shop_refresh_default` | shop_refresh_executor | Every 5 min tick; per-guild interval configurable (default 6 h) |
 | `temperature_decay_default` | temperature_decay_executor | Every 1 hour |
 | `bounty_failsafe_cleanup_default` | bounty_failsafe_cleanup_executor | Every hour at :30 |
 | `pg_backup_default` | pg_backup_executor | Every 3 hours at :15 |

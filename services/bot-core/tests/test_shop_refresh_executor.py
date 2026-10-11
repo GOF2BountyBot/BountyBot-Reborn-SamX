@@ -78,6 +78,8 @@ import respx
 import utils.executors.shop_refresh_executor as exec_module
 from persist.models.base import Base
 from persist.models.guild_config import GuildConfig
+from persist.models.guild_shop import GuildShop
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 execute_shop_refresh_job = exec_module.execute_shop_refresh_job
@@ -88,6 +90,7 @@ execute_shop_refresh_job = exec_module.execute_shop_refresh_job
 
 _SQLITE_TABLES = [
     GuildConfig.__table__,
+    GuildShop.__table__,
 ]
 
 # ---------------------------------------------------------------------------
@@ -771,3 +774,42 @@ class TestItemsKeyFallbackAdversarial:
         assert len(announce_items_received) == 4
         for i, received in enumerate(announce_items_received):
             assert received == [], f"Tier #{i + 1}: items=None should fall back to [] via `or []`, got {received!r}"
+
+
+# ===========================================================================
+# Due-aware bulk run (issue #119) — schedule math is covered on real PG in
+# tests/integration/test_shop_refresh_schedule_pg.py
+# ===========================================================================
+
+
+class TestBulkRefreshIsolation:
+    async def test_failing_guild_does_not_stop_the_next(self, sqlite_engine_and_factory):
+        """A guild whose refresh raises is logged and skipped; the next guild is still refreshed.
+
+        # db_manager bridge + refresh_shop fake (ARRAY-column bypass) + announce stub
+        """
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID)
+            await _seed_guild_config(seed_db, GUILD_ID_2)
+
+        async def _fake_refresh(db, guild_id, tier, force_tech_level=None):
+            if guild_id == GUILD_ID:
+                raise RuntimeError("broken guild")
+            return _FAKE_REFRESH_RESULT
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", side_effect=_fake_refresh),
+            patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
+            patch("utils.executors.shop_refresh_executor._shared_announce", new=AsyncMock()) as announce,
+        ):
+            result = await execute_shop_refresh_job("job-isolation", {})
+
+        assert result["status"] == "success"
+        assert set(result["results"]) == {GUILD_ID_2}
+        assert {c.kwargs["guild_id"] for c in announce.call_args_list} == {GUILD_ID_2}
+        async with factory() as db:
+            rows = dict((await db.execute(select(GuildConfig.guild_id, GuildConfig.shop_next_refresh_at))).all())
+        assert rows[GUILD_ID] is None, "failed guild must stay due for the next tick"
+        assert rows[GUILD_ID_2] is not None

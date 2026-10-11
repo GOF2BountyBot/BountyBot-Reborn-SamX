@@ -571,3 +571,168 @@ def test_render_rules_division_appends_line():
     et = EVENT_TYPES["duels_won"]
     result = render_rules(et, min_stakes=1000, min_fights=1, division="Bronze", params={"division": "Bronze"})
     assert "Bronze division only." in result, f"division line missing: {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# must_win — render_rules sentence (issue #120)
+# ---------------------------------------------------------------------------
+
+
+def test_render_rules_must_win_appends_sentence():
+    """must_win=True adds 'Only fights you win count.' after the base rules text."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["module_activations"]
+    result = render_rules(
+        et, min_stakes=1000, min_fights=1, division=None, params={"module": "emergency_system", "must_win": True}
+    )
+    assert "Only fights you win count." in result, f"sentence missing: {result!r}"
+
+
+def test_render_rules_must_win_false_no_sentence():
+    """must_win=False (or absent) does NOT add the sentence."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["module_activations"]
+    no_flag = render_rules(et, min_stakes=1000, min_fights=1, division=None, params={"module": "emergency_system"})
+    explicit_false = render_rules(
+        et, min_stakes=1000, min_fights=1, division=None, params={"module": "emergency_system", "must_win": False}
+    )
+    assert "Only fights you win count." not in no_flag
+    assert "Only fights you win count." not in explicit_false
+
+
+def test_render_rules_must_win_sentence_before_min_fights():
+    """must_win sentence appears before the 'Prizes require' line."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["module_activations"]
+    result = render_rules(
+        et, min_stakes=1000, min_fights=5, division=None, params={"module": "cloak", "must_win": True}
+    )
+    idx_win = result.index("Only fights you win count.")
+    idx_prize = result.index("Prizes require")
+    assert idx_win < idx_prize, f"must_win sentence must precede min_fights sentence: {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# must_win — record() filtering (issue #120)
+# ---------------------------------------------------------------------------
+
+
+async def test_must_win_loss_records_only_activity(engine_and_factory):
+    """must_win event: won=False upserts only 'fights'; scored metric is skipped."""
+    _, factory = engine_and_factory
+    ev = _make_event(slug="module_activations", params={"module": "emergency_system", "must_win": True})
+    async with factory() as session:
+        await _seed(session, events=[ev])
+        await session.refresh(ev)
+        player = _make_player()
+        await record(
+            session,
+            player,
+            {"fights": 1.0, "module_activations:emergency_system": 3.0},
+            context="bounty",
+            won=False,
+        )
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+
+        rows = (
+            (await session.execute(select(GameEventMetric).where(GameEventMetric.player_id == player.id)))
+            .scalars()
+            .all()
+        )
+        by_key = {r.metric: float(r.value) for r in rows}
+        assert by_key.get("fights") == 1.0, f"fights should be recorded: {by_key}"
+        assert "module_activations:emergency_system" not in by_key, f"scored metric must be absent on loss: {by_key}"
+
+
+async def test_must_win_win_records_all(engine_and_factory):
+    """must_win event: won=True upserts both fights and scored metric."""
+    _, factory = engine_and_factory
+    ev = _make_event(slug="module_activations", params={"module": "emergency_system", "must_win": True})
+    async with factory() as session:
+        await _seed(session, events=[ev])
+        await session.refresh(ev)
+        player = _make_player()
+        await record(
+            session,
+            player,
+            {"fights": 1.0, "module_activations:emergency_system": 2.0},
+            context="bounty",
+            won=True,
+        )
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+
+        rows = (
+            (await session.execute(select(GameEventMetric).where(GameEventMetric.player_id == player.id)))
+            .scalars()
+            .all()
+        )
+        by_key = {r.metric: float(r.value) for r in rows}
+        assert by_key.get("fights") == 1.0
+        assert by_key.get("module_activations:emergency_system") == 2.0, f"scored metric missing on win: {by_key}"
+
+
+async def test_must_win_absent_won_false_records_all(engine_and_factory):
+    """Without must_win, won=False still records all metrics (unchanged behaviour)."""
+    _, factory = engine_and_factory
+    ev = _make_event(slug="module_activations", params={"module": "emergency_system"})
+    async with factory() as session:
+        await _seed(session, events=[ev])
+        await session.refresh(ev)
+        player = _make_player()
+        await record(
+            session,
+            player,
+            {"fights": 1.0, "module_activations:emergency_system": 2.0},
+            context="bounty",
+            won=False,
+        )
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+
+        rows = (
+            (await session.execute(select(GameEventMetric).where(GameEventMetric.player_id == player.id)))
+            .scalars()
+            .all()
+        )
+        by_key = {r.metric: float(r.value) for r in rows}
+        assert by_key.get("module_activations:emergency_system") == 2.0, f"scored metric should be present: {by_key}"
+
+
+async def test_must_win_won_none_records_all(engine_and_factory):
+    """won=None (duel/bounty callers that don't pass it) ignores must_win entirely."""
+    _, factory = engine_and_factory
+    ev = _make_event(slug="module_activations", params={"module": "cloak", "must_win": True})
+    async with factory() as session:
+        await _seed(session, events=[ev])
+        await session.refresh(ev)
+        player = _make_player()
+        await record(
+            session,
+            player,
+            {"fights": 1.0, "module_activations:cloak": 4.0},
+            context="bounty",
+            won=None,
+        )
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+
+        rows = (
+            (await session.execute(select(GameEventMetric).where(GameEventMetric.player_id == player.id)))
+            .scalars()
+            .all()
+        )
+        by_key = {r.metric: float(r.value) for r in rows}
+        assert by_key.get("module_activations:cloak") == 4.0, f"won=None should not filter: {by_key}"

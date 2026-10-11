@@ -51,6 +51,20 @@ _config_repo = ConfigRepository()
 
 _KNOWN_PARAM_KEYS = {"division", "weapon", "subtype", "module", "min_fights"}
 _VALID_DIVISIONS = {"Bronze", "Silver", "Gold", "Platinum"}
+# must_win is accepted for these 8 combat types where a lost fight can feed the score.
+# All other types (bounty family, duel family, kills, fights_fought, longest_battle_*) reject it with 400.
+_MUST_WIN_ELIGIBLE_TYPES: frozenset[str] = frozenset(
+    {
+        "secondary_fired",
+        "module_activations",
+        "shots_fired",
+        "total_damage_dealt",
+        "avg_accuracy",
+        "max_damage_dealt_fight",
+        "max_damage_taken_fight",
+        "max_single_nuke_damage",
+    }
+)
 _VALID_SUBTYPES: frozenset[str] = frozenset(
     {
         "nuke",
@@ -105,6 +119,9 @@ def _validate_params(type_slug: str, params: dict) -> None:
                     required.add(key)
     # division and min_fights are accepted by all types but never required
     accepted |= {"division", "min_fights"}
+    # must_win accepted only for the 8 eligible combat types
+    if type_slug in _MUST_WIN_ELIGIBLE_TYPES:
+        accepted.add("must_win")
     # Require placeholder params to be present (e.g. secondary_fired needs subtype)
     for key in required:
         if key not in params:
@@ -143,6 +160,10 @@ def _validate_params(type_slug: str, params: dict) -> None:
         mf = params["min_fights"]
         if not isinstance(mf, int) or mf < 0:
             raise HTTPException(status_code=400, detail=f"min_fights must be a non-negative integer, got {mf!r}")
+    if "must_win" in params:
+        mw = params["must_win"]
+        if not isinstance(mw, bool):  # rejects int 1/0, strings — bool is a subclass of int so check type directly
+            raise HTTPException(status_code=400, detail=f"must_win must be a boolean (true/false), got {mw!r}")
 
 
 def _conflicting_prizes(existing: list, rank_from: int | None, rank_to: int | None) -> list:
@@ -171,6 +192,8 @@ def _type_param_keys(type_slug: str) -> list[str]:
         keys.append("division")
     if "min_fights" not in keys:
         keys.append("min_fights")
+    if type_slug in _MUST_WIN_ELIGIBLE_TYPES:
+        keys.append("must_win")
     return keys
 
 

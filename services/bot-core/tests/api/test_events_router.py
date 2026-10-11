@@ -1469,3 +1469,97 @@ class TestAddPrizeReplace:
         )
         assert resp.status_code == 201
         mock_session.delete.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# must_win param validation (issue #120)
+# ---------------------------------------------------------------------------
+
+
+class TestMustWinValidation:
+    """_validate_params must_win acceptance / rejection rules."""
+
+    def test_must_win_accepted_for_eligible_type(self):
+        from api.routers.events import _validate_params
+
+        # module_activations is one of the 8 eligible types
+        _validate_params("module_activations", {"module": "emergency_system", "must_win": True})
+
+    def test_must_win_rejected_for_ineligible_type_duels_won(self):
+        from api.routers.events import _validate_params
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_params("duels_won", {"must_win": True})
+        assert exc_info.value.status_code == 400
+        assert "must_win" in exc_info.value.detail
+
+    def test_must_win_rejected_for_ineligible_type_kills(self):
+        from api.routers.events import _validate_params
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_params("kills", {"must_win": True})
+        assert exc_info.value.status_code == 400
+
+    def test_must_win_rejected_for_longest_battle_lost(self):
+        """longest_battle_lost is already losses-only; must_win would be meaningless."""
+        from api.routers.events import _validate_params
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_params("longest_battle_lost", {"must_win": True})
+        assert exc_info.value.status_code == 400
+
+    def test_must_win_rejected_non_bool_int_one(self):
+        """must_win=1 (int) must be rejected — bool is subclass of int."""
+        from api.routers.events import _validate_params
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_params("module_activations", {"module": "emergency_system", "must_win": 1})
+        assert exc_info.value.status_code == 400
+        assert "bool" in exc_info.value.detail.lower()
+
+    def test_must_win_rejected_non_bool_string(self):
+        from api.routers.events import _validate_params
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_params("shots_fired", {"must_win": "true"})
+        assert exc_info.value.status_code == 400
+
+    def test_must_win_in_type_param_keys_for_eligible(self):
+        """_type_param_keys includes must_win for eligible types."""
+        from api.routers.events import _type_param_keys
+
+        keys = _type_param_keys("module_activations")
+        assert "must_win" in keys
+
+    def test_must_win_not_in_type_param_keys_for_ineligible(self):
+        """_type_param_keys does NOT include must_win for non-eligible types."""
+        from api.routers.events import _type_param_keys
+
+        for slug in ("duels_won", "bounty_caps", "kills", "fights_fought"):
+            assert "must_win" not in _type_param_keys(slug), f"must_win should be absent for {slug}"
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events._config_repo")
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_must_win_accepted_on_patch_edit(self, mock_db, mock_admin, mock_cfg, mock_push, client, db_ctx):
+        """PATCH /events/{id} with must_win=true succeeds for an eligible event type."""
+        ev = make_event(state="draft", type_slug="module_activations", params={"module": "cloak"})
+        mock_session, mock_cm = db_ctx
+        prizes = MagicMock()
+        prizes.scalars.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(side_effect=[MagicMock(scalar_one_or_none=lambda: ev), prizes])
+        mock_db.return_value = mock_cm
+        mock_cfg.get_by_guild_id = AsyncMock(return_value=None)
+
+        resp = client.patch(
+            "/api/v1/events/1?guild_id=99&user_id=42",
+            json={"params": {"module": "cloak", "must_win": True}},
+        )
+        assert resp.status_code == 200, resp.text
+        assert ev.params == {"module": "cloak", "must_win": True}

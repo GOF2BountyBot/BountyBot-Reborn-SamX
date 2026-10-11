@@ -527,7 +527,7 @@ class CombatService:
                             _contrib[f"kills_by_weapon:{_kb}"] = 1.0
                     elif not fight_results.is_stalemate:  # stalemate: neither won nor lost
                         _contrib["duration_ticks_loss"] = float(summary.get("duration_ticks", 0))
-                    await _event_svc.record(session, player, _contrib, context=context, stakes=stakes)
+                    await _event_svc.record(session, player, _contrib, context=context, stakes=stakes, won=is_winner)
             except Exception as exc:
                 # Non-fatal — stat increment failure should not abort the fight
                 flogger.error(f"Player stat increment failed: user_id={user_id} guild_id={guild_id}: {exc}")

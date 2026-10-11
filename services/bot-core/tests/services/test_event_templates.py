@@ -195,3 +195,17 @@ async def test_startup_sync_isolates_a_failing_guild():
         totals = await mod.sync_all_guild_templates()
     assert calls == [1, 2, 3]
     assert totals == {"created": 2, "updated": 0, "skipped": 0, "failed": 1}
+
+
+# ---------------------------------------------------------------------------
+# must_win templates (issue #120)
+# ---------------------------------------------------------------------------
+
+
+def test_ghost_speed_demon_close_call_have_must_win():
+    """Ghost, Speed Demon, and Close Call OOB templates carry must_win=true; no others do."""
+    defs = mod.load_oob_templates()
+    must_win_names = {d["name"] for d in defs if d.get("params", {}).get("must_win") is True}
+    assert must_win_names == {"Ghost", "Speed Demon", "Close Call"}, (
+        f"exactly those three should carry must_win=true, got: {must_win_names}"
+    )

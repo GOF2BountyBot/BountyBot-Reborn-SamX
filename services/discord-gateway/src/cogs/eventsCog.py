@@ -554,6 +554,7 @@ class EventsCog(commands.Cog):
         module="Module type (for module events)",
         weapon="Weapon category (for weapon-kill events)",
         min_fights="Minimum battles/checks to qualify (default per type; 0 = no gate)",
+        must_win="Combat events: only fights the player wins count toward the score",
         template="With type 'From Template': the template to copy (type, settings, prizes)",
         save_as_template="True = store as a named template instead of a draft (edit it like a draft; never runs)",
         template_name="Name for the template (with save_as_template: True)",
@@ -576,6 +577,7 @@ class EventsCog(commands.Cog):
         module: str | None = None,
         weapon: str | None = None,
         min_fights: app_commands.Range[int, 0] | None = None,
+        must_win: bool | None = None,
         template: str | None = None,
         save_as_template: bool = False,
         template_name: app_commands.Range[str, 1, 64] | None = None,
@@ -607,6 +609,8 @@ class EventsCog(commands.Cog):
             params["weapon"] = weapon
         if min_fights is not None:
             params["min_fights"] = min_fights
+        if must_win is True:  # only send True; ineligible types would 400 on False too
+            params["must_win"] = True
 
         body: dict = {"guild_id": interaction.guild_id, "type_slug": type, "params": params}
         if duration_days is not None:
@@ -662,6 +666,7 @@ class EventsCog(commands.Cog):
         module="Module type (for module events)",
         weapon="Weapon category (for weapon-kill events)",
         min_fights="Minimum battles/checks to qualify (0 = no gate)",
+        must_win="Combat events: True = wins-only scoring; False = remove the restriction",
     )
     @app_commands.autocomplete(
         event=_ac_event_editable,
@@ -680,6 +685,7 @@ class EventsCog(commands.Cog):
         module: str | None = None,
         weapon: str | None = None,
         min_fights: app_commands.Range[int, 0] | None = None,
+        must_win: bool | None = None,
     ):
         if not await self._admin_gate(interaction):
             return
@@ -701,6 +707,11 @@ class EventsCog(commands.Cog):
                 params.pop("division", None)
             else:
                 params[key] = val
+        if must_win is True:
+            params["must_win"] = True
+        elif must_win is False:
+            params.pop("must_win", None)
+        # must_win is None → leave params unchanged
         body: dict = {"params": params}
         if duration_days is not None:
             body["duration_days"] = duration_days

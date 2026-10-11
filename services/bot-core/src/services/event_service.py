@@ -36,6 +36,7 @@ async def record(
     *,
     context: str,
     stakes: int | None = None,
+    won: bool | None = None,
 ) -> None:
     """Upsert event metric rows for a player contribution (spec §3).
 
@@ -43,6 +44,8 @@ async def record(
     - Applies duel-stakes filter (context=="duel" && stakes < event_min_duel_stakes → skip).
     - Skips division-scoped events where player.tier != params["division"].
     - For each consumed metric does a native upsert (sum or max).
+    - When params["must_win"] is True and won is False, only the activity metric is recorded.
+      won=None (duel/bounty callers that don't pass it) disables the filter entirely.
     - Never raises — non-fatal, same rule as _increment_player_stats.
     - Flushes only; the caller owns the transaction.
     """
@@ -79,6 +82,13 @@ async def record(
                 # Division gate
                 params = event.params or {}
                 if "division" in params and player.tier != params["division"]:
+                    continue
+
+                # must_win filter: lost/stalemate fight (won is False) only counts toward activity
+                if params.get("must_win") and won is False:
+                    activity_value = contrib.get(et.activity, 0.0)
+                    if activity_value > 0.0:
+                        await _upsert_metric(session, dialect, event.id, player.id, et.activity, activity_value, "sum")
                     continue
 
                 # Expand parameterised metric keys

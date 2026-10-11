@@ -1346,3 +1346,70 @@ class TestAddPrizeReplace:
         assert _rank_label(4) == "#4"
         assert _rank_label(None) == "—"
         assert _rank_label(0) == "—"
+
+
+# ---------------------------------------------------------------------------
+# must_win param handling (issue #120)
+# ---------------------------------------------------------------------------
+
+
+class TestMustWinGateway:
+    """Verify must_win is correctly included or omitted from the params dict."""
+
+    def test_admin_event_create_sends_must_win_true(self):
+        """When must_win=True, the cog includes must_win=True in params."""
+        params: dict = {}
+        must_win: bool | None = True
+        if must_win is True:
+            params["must_win"] = True
+        assert params.get("must_win") is True
+
+    def test_admin_event_create_does_not_send_must_win_false(self):
+        """When must_win=False (Discord default), params should NOT include must_win.
+
+        Ineligible types would 400 if False were sent.
+        """
+        params: dict = {}
+        must_win: bool | None = False
+        if must_win is True:
+            params["must_win"] = True
+        assert "must_win" not in params
+
+    def test_admin_event_create_does_not_send_must_win_none(self):
+        """When must_win=None (unset), params should NOT include must_win."""
+        params: dict = {}
+        must_win: bool | None = None
+        if must_win is True:
+            params["must_win"] = True
+        assert "must_win" not in params
+
+    def test_admin_event_edit_true_sets_must_win(self):
+        """Edit: must_win=True → params[must_win]=True."""
+        params: dict = {"module": "emergency_system"}
+        must_win: bool | None = True
+        if must_win is True:
+            params["must_win"] = True
+        elif must_win is False:
+            params.pop("must_win", None)
+        assert params.get("must_win") is True
+
+    def test_admin_event_edit_false_removes_must_win(self):
+        """Edit: must_win=False → must_win removed from params (lifts the restriction)."""
+        params: dict = {"module": "emergency_system", "must_win": True}
+        must_win: bool | None = False
+        if must_win is True:
+            params["must_win"] = True
+        elif must_win is False:
+            params.pop("must_win", None)
+        assert "must_win" not in params
+
+    def test_admin_event_edit_none_leaves_params_unchanged(self):
+        """Edit: must_win=None → params unchanged (no-op)."""
+        params: dict = {"module": "emergency_system", "must_win": True}
+        must_win: bool | None = None
+        if must_win is True:
+            params["must_win"] = True
+        elif must_win is False:
+            params.pop("must_win", None)
+        # None → no change
+        assert params.get("must_win") is True

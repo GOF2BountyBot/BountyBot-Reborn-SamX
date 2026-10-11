@@ -2082,6 +2082,117 @@ async def test_check_bounty_not_on_cooldown_cooldown_until_is_none(service, mock
 
 
 # ===========================================================================
+# Tests: check_bounty — issue #124 check-count timing
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_incorrect_check_fires_event_record_at_check_time(check_bounty_setup):
+    """INCORRECT check calls event_service.record(checks=1.0) at check-time, not capture-time (issue #124)."""
+    service, mock_db = check_bounty_setup
+    player = _make_player()
+    bounty = _make_active_bounty(route=["Alpha", "Sol"], answer="Sol")
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+
+    with patch("services.event_service.record", new_callable=AsyncMock) as mock_record:
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
+
+    assert result.result == CheckResult.INCORRECT
+    # Exactly one record call; it carries checks=1.0
+    checks_calls = [c for c in mock_record.call_args_list if c.args[2].get("checks")]
+    assert len(checks_calls) == 1
+    assert checks_calls[0].args[2] == {"checks": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_already_checked_skips_event_record(check_bounty_setup):
+    """ALREADY_CHECKED returns before marking the system — event_service.record never called (issue #124)."""
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=1)
+    # Alpha already checked by another player (value != -1)
+    bounty = _make_active_bounty(route=["Alpha", "Sol"], answer="Sol", checked={"Alpha": 2, "Sol": -1})
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+
+    with patch("services.event_service.record", new_callable=AsyncMock) as mock_record:
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
+
+    assert result.result == CheckResult.ALREADY_CHECKED
+    mock_record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_two_bounties_same_system_records_two_checks(check_bounty_setup):
+    """Two bounties share the checked system — event_service.record fires once per bounty (issue #124)."""
+    service, mock_db = check_bounty_setup
+    player = _make_player()
+    bounty1 = _make_active_bounty(bounty_id=10, route=["Alpha", "Sol"], answer="Sol")
+    bounty2 = _make_active_bounty(bounty_id=11, route=["Alpha", "Beta"], answer="Beta")
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty1, bounty2]
+    # get_by_id_for_update side_effect: auto-route by ID (service fixture default handles this)
+    service.bounty_repo.update.return_value = None
+
+    with patch("services.event_service.record", new_callable=AsyncMock) as mock_record:
+        await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
+
+    checks_calls = [c for c in mock_record.call_args_list if c.args[2].get("checks")]
+    assert len(checks_calls) == 2, f"Expected 2 checks calls, got {len(checks_calls)}"
+
+
+@pytest.mark.asyncio
+async def test_distribute_rewards_winner_records_captures_not_checks(service, mock_db):
+    """distribute_rewards records captures=1.0 for winner and never records checks (issue #124)."""
+    from services.bounty_service import RewardInfo
+
+    player = SimpleNamespace(
+        id=1,
+        user_id=1000,
+        guild_id=9999,
+        credits=0,
+        lifetime_credits=0,
+        xp=0,
+        classic_mode=False,
+        bounty_wins=0,
+        systems_checked=5,
+    )
+    bounty = _make_active_bounty()
+    bounty.status = "active"
+    service.player_repo.get_by_id_for_update = AsyncMock(return_value=player)
+    service.bounty_repo.update = AsyncMock()
+
+    with patch("services.event_service.record", new_callable=AsyncMock) as mock_record:
+        await service.distribute_rewards(
+            mock_db, bounty, [RewardInfo(player_id=1, credits_earned=100, xp_earned=10, is_winner=True)]
+        )
+
+    call_contribs = [c.args[2] for c in mock_record.call_args_list]
+    # Winner gets captures=1.0 only; checks key must never appear
+    assert {"captures": 1.0} in call_contribs, f"Expected captures call, got: {call_contribs}"
+    assert not any("checks" in c for c in call_contribs), f"Unexpected checks call: {call_contribs}"
+    # systems_checked is untouched by distribute_rewards (counted at check-time)
+    assert player.systems_checked == 5
+
+
+@pytest.mark.asyncio
+async def test_on_cooldown_skips_event_record(service, mock_db):
+    """ON_COOLDOWN returns before any bounty processing — event_service.record never called (issue #124)."""
+    from datetime import UTC, datetime, timedelta
+
+    future = datetime.now(UTC) + timedelta(seconds=120)
+    player = _make_player(bounty_cooldown_end=future)
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+
+    with patch("services.event_service.record", new_callable=AsyncMock) as mock_record:
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.ON_COOLDOWN
+    mock_record.assert_not_called()
+
+
+# ===========================================================================
 # Tests: check_bounty — combat integration
 # ===========================================================================
 

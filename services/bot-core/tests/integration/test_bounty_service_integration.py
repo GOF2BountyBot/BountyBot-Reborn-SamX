@@ -323,8 +323,8 @@ class TestDistributeRewardsIntegration:
             await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_distribute_rewards_systems_checked_incremented_cross_session(self, service):
-        """systems_checked counter increment is durable — verified cross-session."""
+    async def test_distribute_rewards_does_not_touch_systems_checked(self, service):
+        """distribute_rewards no longer touches systems_checked (counted at check-time, issue #124)."""
         engine, factory = await _fresh_engine_and_factory()
         try:
             async with factory() as session_a:
@@ -357,8 +357,9 @@ class TestDistributeRewardsIntegration:
             async with factory() as session_b:
                 player_b = await session_b.get(Player, player_id)
                 assert player_b is not None
-                assert player_b.systems_checked == 13, (
-                    f"Expected systems_checked=13 (10+3) but got {player_b.systems_checked}"
+                # systems_checked is untouched by distribute_rewards; it was already 10 before.
+                assert player_b.systems_checked == 10, (
+                    f"distribute_rewards must not touch systems_checked, expected 10 got {player_b.systems_checked}"
                 )
         finally:
             await engine.dispose()

@@ -207,7 +207,7 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "shock_blast_trigger_range_m",
     # Shield / armour regen reemission (CI-21)
     "combat_layer_reemit_fraction",
-    # _OVERRIDE_FIELDS == _GAME_CONSTANT_FIELDS (adminCog): 110 fields as of rev 0033 (dropped 7 JSONB dicts).
+    # _OVERRIDE_FIELDS == _GAME_CONSTANT_FIELDS (adminCog): 112 fields as of rev 0038.
 )
 
 

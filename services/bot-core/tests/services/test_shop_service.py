@@ -8,7 +8,7 @@ module is imported (see conftest.py at the tests/ root).
 import sys
 import types
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -39,7 +39,7 @@ from persist.models.player_ship import PlayerShip
 from persist.models.ship import Ship
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
-from services.shop_service import ShopService
+from services.shop_service import ShopService, shop_refresh_gap
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -3150,3 +3150,23 @@ class TestGetItemTechLevelColdCachePath:
 
         # Must return 0, not fall through to 1
         assert tl == 0
+
+
+class TestShopRefreshGap:
+    """shop_refresh_gap: interval × (1 ± jitter%), per-guild overrides with GameConstants fallback (#119)."""
+
+    def test_unset_overrides_use_game_constant_defaults(self):
+        gap = shop_refresh_gap(GuildConfig(guild_id=1))
+        assert GameConstants.SHOP_REFRESH_JITTER_PCT == 0
+        assert gap == timedelta(hours=GameConstants.SHOP_REFRESH_INTERVAL_HOURS)
+
+    def test_zero_jitter_is_exact(self):
+        assert shop_refresh_gap(GuildConfig(guild_id=1, shop_refresh_interval_hours=4, shop_refresh_jitter_pct=0)) == (
+            timedelta(hours=4)
+        )
+
+    def test_max_jitter_stays_within_half_to_one_and_a_half_and_varies(self):
+        config = GuildConfig(guild_id=1, shop_refresh_interval_hours=6, shop_refresh_jitter_pct=50)
+        gaps = {shop_refresh_gap(config) for _ in range(200)}
+        assert all(timedelta(hours=3) <= g <= timedelta(hours=9) for g in gaps)
+        assert len(gaps) > 1

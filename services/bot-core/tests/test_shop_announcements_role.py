@@ -51,6 +51,7 @@ import respx
 import utils.executors.shop_refresh_executor as exec_module
 from persist.models.base import Base
 from persist.models.guild_config import GuildConfig
+from persist.models.guild_shop import GuildShop
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 execute_shop_refresh_job = exec_module.execute_shop_refresh_job
@@ -59,7 +60,9 @@ execute_shop_refresh_job = exec_module.execute_shop_refresh_job
 # Constants
 # ---------------------------------------------------------------------------
 
-_SQLITE_TABLES = [GuildConfig.__table__]
+# GuildShop is now queried by the executor (last_restocked due-time check introduced
+# in issue #119 part 2).  Add it here so SQLite can satisfy that query.
+_SQLITE_TABLES = [GuildConfig.__table__, GuildShop.__table__]
 
 GUILD_ID = 9_600_000_010
 SHOP_CHANNEL = 12_500

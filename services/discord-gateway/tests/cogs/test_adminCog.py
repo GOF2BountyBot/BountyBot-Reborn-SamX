@@ -3576,6 +3576,24 @@ class TestAdminRefreshShop:
         msg = interaction.followup.send.call_args[0][0]
         assert "admin" in msg.lower() or "❌" in msg
 
+    @pytest.mark.parametrize(
+        ("tier", "expected"),
+        [(None, [False, False, False, True]), ("Silver", [False])],
+    )
+    def test_reset_schedule_only_on_last_tier_of_full_refresh(self, mock_admin_cog, tier, expected):
+        """A full refresh (no tier) resets the schedule once, on the last tier; a single tier never does."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"message": "Shop refreshed"}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, tier, None))
+
+        sent = [c.kwargs["json"]["reset_schedule"] for c in mock_admin_cog.http_client.post.call_args_list]
+        assert sent == expected
+
 
 class TestAdminGuildStats:
     """Tests for admin_guild_stats command (lines 590-625)."""

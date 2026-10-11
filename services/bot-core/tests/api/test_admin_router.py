@@ -4,7 +4,7 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1543,6 +1543,80 @@ class TestRefreshShop:
         assert "hull_hp" in item
         assert item["emoji"] is None
         assert item["dps"] is None
+
+    # ------------------------------------------------------------------
+    # reset_schedule field
+    # ------------------------------------------------------------------
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_schedule_defaults_to_false(self, mock_get_db, client, mock_shop_service):
+        """reset_schedule defaults to False and request is accepted without it."""
+        _configure_db_mock(mock_get_db)
+        payload = {"guild_id": 67890, "tier": "Bronze"}  # no reset_schedule key
+
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_schedule_true_updates_next_refresh_at(self, mock_get_db, client, mock_shop_service):
+        """When reset_schedule=True and a config is found, shop_next_refresh_at is updated."""
+        _configure_db_mock(mock_get_db)
+        mock_config = MagicMock()
+        mock_config.shop_channel_id = None
+        mock_config.bounty_hunter_role_id = None
+        mock_config.shop_announcements_role_id = None
+        mock_config.shop_refresh_interval_hours = None
+        mock_config.shop_refresh_jitter_pct = 0
+
+        mock_config_repo = AsyncMock()
+        mock_config_repo.get_by_guild_id = AsyncMock(return_value=mock_config)
+
+        payload = {"guild_id": 67890, "tier": "Bronze", "reset_schedule": True}
+
+        with patch("persist.repositories.config_repository.ConfigRepository", return_value=mock_config_repo):
+            before = datetime.now(UTC)
+            response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+            after = datetime.now(UTC)
+
+        assert response.status_code == 200
+        # jitter 0, default interval → exactly now + 6h
+        assert before + timedelta(hours=6) <= mock_config.shop_next_refresh_at <= after + timedelta(hours=6)
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_schedule_with_failed_config_lookup_still_refreshes(self, mock_get_db, client, mock_shop_service):
+        """A failed config lookup skips the schedule reset (and announcement) instead of erroring."""
+        _configure_db_mock(mock_get_db)
+        mock_config_repo = AsyncMock()
+        mock_config_repo.get_by_guild_id = AsyncMock(side_effect=RuntimeError("db hiccup"))
+        payload = {"guild_id": 67890, "tier": "Bronze", "reset_schedule": True}
+
+        with patch("persist.repositories.config_repository.ConfigRepository", return_value=mock_config_repo):
+            response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_schedule_false_does_not_update_next_refresh_at(self, mock_get_db, client, mock_shop_service):
+        """When reset_schedule=False, shop_next_refresh_at is NOT modified."""
+        _configure_db_mock(mock_get_db)
+        mock_config = MagicMock()
+        mock_config.shop_channel_id = None
+        mock_config.bounty_hunter_role_id = None
+        mock_config.shop_announcements_role_id = None
+        original_next_refresh = mock_config.shop_next_refresh_at  # just a MagicMock attr
+
+        mock_config_repo = AsyncMock()
+        mock_config_repo.get_by_guild_id = AsyncMock(return_value=mock_config)
+
+        payload = {"guild_id": 67890, "tier": "Bronze", "reset_schedule": False}
+
+        with patch("persist.repositories.config_repository.ConfigRepository", return_value=mock_config_repo):
+            response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+        # shop_next_refresh_at should NOT have been set by the route
+        assert mock_config.shop_next_refresh_at is original_next_refresh
 
 
 # ===========================================================================

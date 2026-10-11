@@ -889,8 +889,14 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
             tiers_to_refresh = [tier] if tier is not None else list(self._valid_tiers)
             refreshed = []
-            for t in tiers_to_refresh:
-                refresh_data = {"guild_id": interaction.guild_id, "tier": t, "force_tech_level": force_tech_level}
+            for i, t in enumerate(tiers_to_refresh):
+                refresh_data = {
+                    "guild_id": interaction.guild_id,
+                    "tier": t,
+                    "force_tech_level": force_tech_level,
+                    # Full restock (no tier) restarts the guild's schedule once, after the last tier.
+                    "reset_schedule": tier is None and i == len(tiers_to_refresh) - 1,
+                }
                 resp = await self.http_client.post(
                     f"{api_base}/admin/shops/refresh",
                     json=refresh_data,

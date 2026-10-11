@@ -20,6 +20,7 @@ from urllib.parse import quote
 
 from persist.models.bounty import Bounty
 from persist.models.criminal import Criminal
+from persist.models.player import Player
 from persist.repositories.bounty_repository import BountyRepository
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.criminal_repository import CriminalRepository
@@ -27,6 +28,7 @@ from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from shared import bblogger
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.bounty_announcement_payload import is_recently_spotted, resolve_spotted_window
 
@@ -2170,6 +2172,15 @@ class BountyService:
                 player.bounty_cooldown_end = now + timedelta(seconds=cooldown_seconds)
                 cooldown_applied = True
 
+        # Atomically increment systems_checked for each newly-marked system this /check
+        # (issue #124). Runs after all per-bounty mutations but inside the same transaction.
+        # Atomic UPDATE avoids the read-modify-write race; refresh below syncs the ORM object.
+        n = sum(1 for o in outcomes if o.result in (CheckResult.CORRECT, CheckResult.INCORRECT))
+        if n:
+            await db.execute(
+                update(Player).where(Player.id == player_id).values(systems_checked=Player.systems_checked + n)
+            )
+
         # Single transactional commit covering all per-bounty mutations.
         await db.commit()
         await db.refresh(player)
@@ -2297,6 +2308,13 @@ class BountyService:
         # Mark system as checked by this player
         checked[system_name] = player_id
         bounty.checked = checked
+
+        # Count the check at check-time (issue #124): fires for CORRECT, INCORRECT,
+        # lost-combat, and stalemate — any path that actually marks a system.
+        # Non-fatal: event_service.record never raises (SAVEPOINT guard inside).
+        from services import event_service as _event_svc  # deferred — avoids circular import
+
+        await _event_svc.record(db, player, {"checks": 1.0}, context="bounty")
 
         # Check if this is the answer
         if bounty.answer == system_name:
@@ -2925,8 +2943,8 @@ class BountyService:
         For each player:
         1. Add credits to player
         2. Add XP to player (skipped for classic mode players)
-        3. Increment systems_checked count
-        4. Increment bounty_wins for the winner
+        3. Increment bounty_wins for the winner
+        4. Record captures event metric for the winner
         5. Update bounty status to 'completed'
 
         B.48: previously also computed level-up flags, now removed.
@@ -2978,22 +2996,23 @@ class BountyService:
                 player.xp += reward.xp_earned
 
             # Update stats
-            player.systems_checked += reward.systems_checked_count
             if reward.is_winner:
                 player.bounty_wins += 1
 
             # B.48: no level-up detection — the level concept was deleted
             # along with the hardcoded XP_LEVEL_BOUNDARIES.
 
-            # Slice 2: bounty event hook (issue #30 spec §3)
-            from services import event_service as _event_svc  # deferred — avoids circular import
+            # Slice 2: bounty event hook — captures only (issue #124: checks are
+            # counted at check-time in _process_single_bounty_check, not here).
+            if reward.is_winner:
+                from services import event_service as _event_svc  # deferred — avoids circular import
 
-            await _event_svc.record(
-                db,
-                player,
-                {"checks": float(reward.systems_checked_count), "captures": 1.0 if reward.is_winner else 0.0},
-                context="bounty",
-            )
+                await _event_svc.record(
+                    db,
+                    player,
+                    {"captures": 1.0},
+                    context="bounty",
+                )
 
             modified_players.append(player)
 

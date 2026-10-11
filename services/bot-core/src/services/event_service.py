@@ -47,52 +47,53 @@ async def record(
     - Flushes only; the caller owns the transaction.
     """
     try:
-        # Load guild config for stakes floor
-        config = await _config_repo.get_by_guild_id(session, player.guild_id)
-        min_stakes: int = config.event_min_duel_stakes if config else 1000
+        async with session.begin_nested():
+            # Load guild config for stakes floor
+            config = await _config_repo.get_by_guild_id(session, player.guild_id)
+            min_stakes: int = config.event_min_duel_stakes if config else 1000
 
-        # One query: all active events for this guild
-        result = await session.execute(
-            select(GameEvent).where(
-                GameEvent.guild_id == player.guild_id,
-                GameEvent.state == "active",
+            # One query: all active events for this guild
+            result = await session.execute(
+                select(GameEvent).where(
+                    GameEvent.guild_id == player.guild_id,
+                    GameEvent.state == "active",
+                )
             )
-        )
-        active_events = result.scalars().all()
+            active_events = result.scalars().all()
 
-        if not active_events:
-            return
+            if not active_events:
+                return
 
-        dialect = session.bind.dialect.name  # type: ignore[union-attr]
+            dialect = session.bind.dialect.name  # type: ignore[union-attr]
 
-        for event in active_events:
-            et = EVENT_TYPES.get(event.type_slug)
-            if et is None:
-                flogger.warning(f"Unknown event type slug={event.type_slug!r} event_id={event.id} — skipping")
-                continue
-
-            # Duel-stakes filter
-            if context == "duel" and (stakes is None or stakes < min_stakes):
-                continue
-
-            # Division gate
-            params = event.params or {}
-            if "division" in params and player.tier != params["division"]:
-                continue
-
-            # Expand parameterised metric keys
-            metric_modes = resolve_metrics(event.type_slug, params)
-
-            for metric_key, agg_mode in metric_modes.items():
-                contrib_value = contrib.get(metric_key, 0.0)
-                if contrib_value == 0.0 and agg_mode == "sum":
-                    # Nothing to add; still upsert for max so we create the row if absent
-                    # but for sum skip the round-trip entirely.
+            for event in active_events:
+                et = EVENT_TYPES.get(event.type_slug)
+                if et is None:
+                    flogger.warning(f"Unknown event type slug={event.type_slug!r} event_id={event.id} — skipping")
                     continue
 
-                await _upsert_metric(session, dialect, event.id, player.id, metric_key, contrib_value, agg_mode)
+                # Duel-stakes filter
+                if context == "duel" and (stakes is None or stakes < min_stakes):
+                    continue
 
-        await session.flush()
+                # Division gate
+                params = event.params or {}
+                if "division" in params and player.tier != params["division"]:
+                    continue
+
+                # Expand parameterised metric keys
+                metric_modes = resolve_metrics(event.type_slug, params)
+
+                for metric_key, agg_mode in metric_modes.items():
+                    contrib_value = contrib.get(metric_key, 0.0)
+                    if contrib_value == 0.0 and agg_mode == "sum":
+                        # Nothing to add; still upsert for max so we create the row if absent
+                        # but for sum skip the round-trip entirely.
+                        continue
+
+                    await _upsert_metric(session, dialect, event.id, player.id, metric_key, contrib_value, agg_mode)
+
+            await session.flush()
 
     except Exception as exc:
         flogger.error(

@@ -35,6 +35,7 @@ from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants, resolve_constant
 from services.game_maths import pick_shop_tech_level, ship_tech_level_for_value
+from services.inventory_service import top_up_equipped_secondary
 
 flogger = bblogger.get_logger("shop-service")
 
@@ -213,22 +214,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # CI-16: secondary_weapon top-up — if name is already equipped on the active ship,
             # add rounds directly to secondary_ammo instead of cargo.
             # Keep atomic: all mutations are commit=False; single db.commit() below covers all.
-            _topped_up_ammo = False
-            if shop_item.item_type == "secondary_weapon":
-                active_ship = await self.player_ship_repo.get_active_ship(db, player_id)
-                if active_ship is not None and shop_item.item_name in (active_ship.secondary_weapons or []):
-                    # Top up ammo sidecar (reassign — never mutate in place)
-                    _ship_ammo: dict[str, int] = dict(getattr(active_ship, "secondary_ammo", None) or {})
-                    _ship_ammo[shop_item.item_name] = _ship_ammo.get(shop_item.item_name, 0) + quantity
-                    active_ship.secondary_ammo = _ship_ammo
-                    await db.flush()
-                    flogger.info(
-                        f"Player {player_id} top-up secondary '{shop_item.item_name}' +{quantity} rounds "
-                        f"on ship {active_ship.id} (ammo now {_ship_ammo[shop_item.item_name]})"
-                    )
-                    _topped_up_ammo = True
+            _topped_up_ammo = await top_up_equipped_secondary(
+                db, self.player_ship_repo, player_id, shop_item.item_type, shop_item.item_name, quantity
+            )
 
-            if not _topped_up_ammo:
+            if _topped_up_ammo is None:
                 # Add item to player inventory (commit=False — this service owns the
                 # explicit single commit below). B.34 closeout: previously this used
                 # the default commit=True, which committed the credit deduction

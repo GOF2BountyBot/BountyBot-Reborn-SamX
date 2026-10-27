@@ -13,6 +13,7 @@ Vocabulary contract (A.36):
   single concrete type — generic aliases are rejected with InvalidItemTypeError.
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
 from persist.repositories.commodity_repository import CommodityRepository
@@ -31,6 +32,36 @@ from services._item_type_normalizer import expand_item_type_to_concrete
 from services.exceptions import InvalidItemTypeError
 
 flogger = bblogger.get_logger("inventory-service")
+
+
+async def top_up_equipped_secondary(
+    db: AsyncSession,
+    player_ship_repo: PlayerShipRepository,
+    player_id: int,
+    item_type: str,
+    item_name: str,
+    quantity: int,
+) -> int | None:
+    """CI-16: an acquired secondary that is already equipped on the active ship goes
+    straight onto its ammo stack instead of into cargo (same end state as /equip).
+
+    Flushes only — the caller owns the commit.  Returns the new ammo count, or None
+    when the item belongs in cargo.
+    """
+    if item_type != "secondary_weapon":
+        return None
+    active_ship = await player_ship_repo.get_active_ship(db, player_id)
+    if active_ship is None or item_name not in (active_ship.secondary_weapons or []):
+        return None
+    ammo: dict[str, int] = dict(getattr(active_ship, "secondary_ammo", None) or {})
+    ammo[item_name] = ammo.get(item_name, 0) + quantity
+    active_ship.secondary_ammo = ammo  # reassign — never mutate in place
+    await db.flush()
+    flogger.info(
+        f"Player {player_id} top-up secondary '{item_name}' +{quantity} rounds "
+        f"on ship {active_ship.id} (ammo now {ammo[item_name]})"
+    )
+    return ammo[item_name]
 
 
 class InventoryService:
@@ -195,22 +226,31 @@ class InventoryService:
             if not await self._validate_item_exists(db, item_name, concrete_type):
                 raise ValueError(f"Item {item_name} does not exist or is not of type {concrete_type}")
 
-            # Add item to inventory using the concrete type
-            inventory_item = await self.inventory_repo.add_item(
-                db, player_id, concrete_type, item_name, quantity, commit=commit
+            # #135: every acquisition path (/give, admin give, event prizes, loot) tops up
+            # an already-equipped secondary exactly like /buy does.  new_total_quantity is
+            # then the ship's ammo count, since cargo didn't change.
+            ammo = await top_up_equipped_secondary(
+                db, self.player_ship_repo, player_id, concrete_type, item_name, quantity
             )
+            if ammo is not None:
+                if commit:
+                    await db.commit()
+                new_total, acquired_at = ammo, datetime.now(UTC)
+            else:
+                inventory_item = await self.inventory_repo.add_item(
+                    db, player_id, concrete_type, item_name, quantity, commit=commit
+                )
+                new_total, acquired_at = inventory_item.quantity, inventory_item.acquired_at
+                flogger.info(f"Added {quantity}x {item_name} ({concrete_type}) to player {player_id} inventory")
 
-            transaction_details = {
+            return {
                 "player_id": player_id,
                 "item_type": concrete_type,
                 "item_name": item_name,
                 "quantity_added": quantity,
-                "new_total_quantity": inventory_item.quantity,
-                "transaction_time": inventory_item.acquired_at.isoformat(),
+                "new_total_quantity": new_total,
+                "transaction_time": acquired_at.isoformat(),
             }
-
-            flogger.info(f"Added {quantity}x {item_name} ({concrete_type}) to player {player_id} inventory")
-            return transaction_details
 
         except (InvalidItemTypeError, ValueError):
             raise

@@ -971,6 +971,36 @@ class TestShopPurchaseTopUp:
         assert active_ship.secondary_ammo["Rocket"] == 3
 
 
+class TestGiveTopUp:
+    """#135: /give of a secondary the recipient already has equipped → top-up ammo, like /buy."""
+
+    @pytest.mark.asyncio
+    async def test_give_equipped_secondary_tops_up_recipient_ammo(self):
+        from services.inventory_service import InventoryService
+
+        giver = SimpleNamespace(id=7, guild_id=1)
+        recipient = SimpleNamespace(id=42, guild_id=1)
+        recipient_ship = PlayerShip(
+            id=1, player_id=42, ship_name="Betty", secondary_weapons=["Rocket"], secondary_ammo={"Rocket": 3}
+        )
+
+        svc = InventoryService()
+        svc.player_repo.get_by_id_for_update = AsyncMock(side_effect=lambda _db, pid: {7: giver, 42: recipient}[pid])
+        svc.inventory_repo = AsyncMock()
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=SimpleNamespace(quantity=5))
+        svc.player_ship_repo.get_active_ship = AsyncMock(return_value=recipient_ship)
+        svc._validate_item_exists = AsyncMock(return_value=True)
+
+        result = await svc.transfer_item_between_players(
+            AsyncMock(), from_player_id=7, to_player_id=42, item_type="secondary_weapon", item_name="Rocket", quantity=5
+        )
+
+        assert recipient_ship.secondary_ammo["Rocket"] == 8  # 3 + 5
+        assert result["to_player_result"]["new_total_quantity"] == 8
+        svc.inventory_repo.remove_item.assert_awaited_once()  # left the giver's cargo
+        svc.inventory_repo.add_item.assert_not_called()  # never landed in recipient cargo
+
+
 # ---------------------------------------------------------------------------
 # Section G: Migration smoke test
 # ---------------------------------------------------------------------------

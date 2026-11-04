@@ -173,6 +173,10 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     # Blender 4.5 bundles idna 3.10; fixed in 3.15.0. Same purge-then-reinstall \
     # pattern: old dist-info must be removed before pip --target reinstalls cleanly. \
     rm -rf "${SITE_PKGS}"/idna "${SITE_PKGS}"/idna-*.dist-info && \
+    \
+    # ── 5. certifi (GHSA-6q48-6c7w-9gw2 alert #1137: compromised emSign roots) ─ \
+    # Blender 4.5 bundles certifi 2025.4.26; fixed in 2026.10.18. Same purge-then-reinstall. \
+    rm -rf "${SITE_PKGS}"/certifi "${SITE_PKGS}"/certifi-*.dist-info && \
     true \
     # Note: pip itself is NOT deleted here — needed alive for the install RUN below. \
     # It's deleted at the end of that RUN once the reinstalls are complete.
@@ -185,7 +189,8 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     "${BLENDER_PY}" -m pip install --no-cache-dir --target="${SITE_PKGS}" \
         'urllib3>=2.6.3' \
         'requests>=2.33.0' \
-        'idna>=3.15.0' && \
+        'idna>=3.15.0' \
+        'certifi>=2026.10.18' && \
     \
     URLLIB3_VER=$("${BLENDER_PY}" -c 'import urllib3; print(urllib3.__version__)') && \
     REQUESTS_VER=$("${BLENDER_PY}" -c 'import requests; print(requests.__version__)') && \
@@ -200,6 +205,7 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     if ls "${SITE_PKGS}"/urllib3-2.4.*  >/dev/null 2>&1; then echo "ERROR: stale urllib3 2.4.x dist-info"; exit 1; fi && \
     if ls "${SITE_PKGS}"/requests-2.32.3* >/dev/null 2>&1; then echo "ERROR: stale requests 2.32.3 dist-info"; exit 1; fi && \
     if ls "${SITE_PKGS}"/idna-3.1[0-4].* >/dev/null 2>&1; then echo "ERROR: stale idna <3.15 dist-info"; exit 1; fi && \
+    if ls -d "${SITE_PKGS}"/certifi-202[0-5].* >/dev/null 2>&1; then echo "ERROR: stale certifi <2026 dist-info"; exit 1; fi && \
     \
     # ── Final purge: drop pip itself now that installs are complete (alerts #757/#758/#759) ── \
     # Blender's runtime never invokes pip; CVE-2025-8869's actual mitigation comes from PEP 706 in the interpreter. \

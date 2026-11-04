@@ -41,7 +41,8 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
     # 2.8.2-1~deb13u1 (trixie security); the base image ships 2.7.1-2. libexpat1
     # is a transitive dep (python3's pyexpat, dpkg, git) — upgrade explicitly so
     # the fix is pulled regardless of base-image snapshot date.
-    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 liblzma5 libexpat1 \
+    # CVE-2026-109518 (apt, alerts #1138/#1139): fixed in 3.0.4 (DSA-6607-1, trixie security).
+    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 liblzma5 libexpat1 apt libapt-pkg7.0 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

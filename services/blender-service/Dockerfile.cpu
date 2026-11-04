@@ -80,7 +80,8 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
     # 2.8.2-1~deb13u1 (trixie security); the base image ships 2.7.1-2. libexpat1
     # is a transitive dep (python3's pyexpat, dpkg, git) — upgrade explicitly so
     # the fix is pulled regardless of base-image snapshot date.
-    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 liblzma5 libexpat1 \
+    # CVE-2026-109518 (apt, alerts #1142/#1143): fixed in 3.0.4 (DSA-6607-1, trixie security).
+    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 liblzma5 libexpat1 apt libapt-pkg7.0 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
@@ -155,6 +156,10 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     # Blender 4.5 bundles idna 3.10; fixed in 3.15.0. Same purge-then-reinstall \
     # pattern: old dist-info must be removed before pip --target reinstalls cleanly. \
     rm -rf "${SITE_PKGS}"/idna "${SITE_PKGS}"/idna-*.dist-info && \
+    \
+    # ── 5. certifi (GHSA-6q48-6c7w-9gw2 alert #1137: compromised emSign roots) ─ \
+    # Blender 4.5 bundles certifi 2025.4.26; fixed in 2026.10.18. Same purge-then-reinstall. \
+    rm -rf "${SITE_PKGS}"/certifi "${SITE_PKGS}"/certifi-*.dist-info && \
     true \
     # Note: pip itself is NOT deleted here — we need it alive for the next RUN. \
     # It's deleted at the end of the next RUN once the reinstalls are complete.
@@ -169,7 +174,8 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     "${BLENDER_PY}" -m pip install --no-cache-dir --target="${SITE_PKGS}" \
         'urllib3>=2.6.3' \
         'requests>=2.33.0' \
-        'idna>=3.15.0' && \
+        'idna>=3.15.0' \
+        'certifi>=2026.10.18' && \
     \
     # ── Verification: every package must be at its fixed version ──────────── \
     URLLIB3_VER=$("${BLENDER_PY}" -c 'import urllib3; print(urllib3.__version__)') && \
@@ -186,6 +192,7 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     if ls "${SITE_PKGS}"/urllib3-2.4.*  >/dev/null 2>&1; then echo "ERROR: stale urllib3 2.4.x dist-info"; exit 1; fi && \
     if ls "${SITE_PKGS}"/requests-2.32.3* >/dev/null 2>&1; then echo "ERROR: stale requests 2.32.3 dist-info"; exit 1; fi && \
     if ls "${SITE_PKGS}"/idna-3.1[0-4].* >/dev/null 2>&1; then echo "ERROR: stale idna <3.15 dist-info"; exit 1; fi && \
+    if ls -d "${SITE_PKGS}"/certifi-202[0-5].* >/dev/null 2>&1; then echo "ERROR: stale certifi <2026 dist-info"; exit 1; fi && \
     \
     # ── Final purge: drop pip itself now that installs are complete ──────── \
     # Done last so the install step above could still use it. \
